@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNSUPPORTED_RULE",
+    "message": "Only IPv4 CIDR rules are supported"
+  }
+}

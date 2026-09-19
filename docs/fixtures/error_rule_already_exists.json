@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "RULE_ALREADY_EXISTS",
+    "message": "Cannot plan AUTHORIZE: rule already exists in security group"
+  }
+}

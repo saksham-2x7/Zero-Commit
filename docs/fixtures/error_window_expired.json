@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "WINDOW_EXPIRED",
+    "message": "Confirmation window has expired",
+    "change_id": "01J7Z800000000000000000001",
+    "status": "PENDING"
+  }
+}

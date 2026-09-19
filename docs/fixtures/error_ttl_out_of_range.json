@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "TTL_OUT_OF_RANGE",
+    "message": "TTL must be between 60 and 600 seconds"
+  }
+}

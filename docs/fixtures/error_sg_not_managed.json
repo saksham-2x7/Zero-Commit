@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "SG_NOT_MANAGED",
+    "message": "Security group lacks required deadman management tags for this stage"
+  }
+}

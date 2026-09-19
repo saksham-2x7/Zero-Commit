@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "SG_NOT_FOUND",
+    "message": "Security group was not found"
+  }
+}

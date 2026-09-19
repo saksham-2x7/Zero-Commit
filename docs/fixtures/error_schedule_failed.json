@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "SCHEDULE_FAILED",
+    "message": "Failed to create EventBridge schedule; no changes applied",
+    "change_id": "01J7Z800000000000000000001",
+    "status": "FAILED"
+  }
+}

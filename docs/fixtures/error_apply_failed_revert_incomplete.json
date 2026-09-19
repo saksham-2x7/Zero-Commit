@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "APPLY_FAILED_REVERT_INCOMPLETE",
+    "message": "Apply cut failed and revert could not complete cleanly",
+    "change_id": "01J7Z800000000000000000001",
+    "status": "PARTIAL_REVERT"
+  }
+}

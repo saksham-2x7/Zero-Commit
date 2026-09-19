@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "SG_BUSY",
+    "message": "An active change is already pending or reverting on this security group",
+    "change_id": "01J7Z800000000000000000001"
+  }
+}
