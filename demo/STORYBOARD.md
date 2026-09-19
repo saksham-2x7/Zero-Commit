@@ -4,6 +4,8 @@ Recorded (no live demo) from the deployed CloudFront URL. At least 2 full takes.
 Two windows side by side: browser (Deadman UI) left, terminal running `python demo/curl_loop.py <target-ip>` right.
 `<TTL>` = demo TTL, the smallest passing T from check 1a (`docs/verification_m1.md`). Voice-over lines are drafts.
 
+**How Deadman differs (use in the 0:00-0:25 beat):** Existing tools add or expire access and poll for cleanup: they grant an IP for a while, then a scheduled sweep removes it. Deadman snapshots any security-group change and reverts it on a precise one-time timer unless a human confirms. Closest prior art found so far: tf_aws_lambda_ip_whitelist, aws-lambda-firewall (marekq/robothor), lambda-revoke-sg (bushong1), aws-security-group-add-ip-action (palmetto), and a 2016 Securosis auto-revert of any SG change with no human confirm. Devpost has not been searched yet, so this claim is provisional (see `docs/verification_m4.md`, 1f).
+
 | Time | Screen | Voice-over (draft) |
 |---|---|---|
 | **0:00-0:25** Problem, who, the other side | Title card, then terminal: curl loop green. Cut to a console view of the security group with the public HTTP rule. | "Deadman is a safety net for security-group changes: apply a change, and it undoes itself on a timer unless you confirm it. If you have ever tightened a firewall rule remotely and locked yourself out, this is for you: on-call engineers, small teams, students. On the other side of that mistake are the users of the service that goes dark." |

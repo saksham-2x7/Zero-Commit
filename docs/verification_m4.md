@@ -9,7 +9,7 @@ only debug the script and are never recorded here.
 |---|---|---|
 | 1c | A-9, A-10, A-11 | NOT RUN |
 | 1d | A-13, A-14 | NOT RUN |
-| 1f | none | NOT RUN |
+| 1f | none | PARTIAL: web/GitHub done, Devpost NOT CHECKED (not PASS) |
 
 Run: `python probes/sg_probe.py --yes-aws --write-md` (overwrites the marked result blocks below).
 
@@ -37,12 +37,17 @@ Fallback: Resource `"*"` plus a mandatory in-code tag check before every mutatio
 
 Pass criteria (spec): no project does confirm-or-auto-revert on AWS resources. Fallback: reframe the pitch around the closest hit's gap.
 
-| # | Query | Date run | Closest hit (link) | Does it confirm-or-auto-revert AWS resources? |
-|---|---|---|---|---|
-| 1 | Devpost `"commit confirmed" AWS security group` | | | |
-| 2 | GitHub `"dead man's switch" security group EventBridge Scheduler revert` | | | |
-| 3 | Devpost `auto-revert "security group" hackathon AWS` | | | |
-| 4 | GitHub `"one-time schedule" revoke_security_group_ingress rollback` | | | |
-| 5 | Google/Product Hunt `confirm or rollback AWS infrastructure change "EventBridge Scheduler"` | | | |
+**Result as reported by M4 (manual search, not re-verified by the agent):**
+"No exact clone found on GitHub/web search. Closest: tf_aws_lambda_ip_whitelist, marekq/robothor aws-lambda-firewall, bushong1/lambda-revoke-sg, palmetto aws-security-group-add-ip-action (all expiring grants, polled cleanup), Securosis 2016 auto-revert of any SG change (no human confirm). Devpost NOT CHECKED, to be searched manually."
 
-Verdict: NOT RUN
+Verdict: **PARTIAL, not PASS.** 1f becomes PASS only after M4 confirms the Devpost searches (queries 1 and 3) were run manually.
+
+| # | Query | Status |
+|---|---|---|
+| 1 | Devpost `"commit confirmed" AWS security group` | NOT CHECKED |
+| 2 | GitHub `"dead man's switch" security group EventBridge Scheduler revert` | searched, no exact clone |
+| 3 | Devpost `auto-revert "security group" hackathon AWS` | NOT CHECKED |
+| 4 | GitHub `"one-time schedule" revoke_security_group_ingress rollback` | searched, no exact clone |
+| 5 | Google/Product Hunt `confirm or rollback AWS infrastructure change "EventBridge Scheduler"` | searched, no exact clone |
+
+Per-query status is inferred from the summary above; confirm or correct it when Devpost is done.

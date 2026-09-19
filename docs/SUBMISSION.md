@@ -13,6 +13,9 @@ Deadman is a safety net for security-group changes: apply a change, and it undoe
 ## Who it is for, and the other side
 Anyone changing firewall rules remotely: on-call engineers, small teams, students. On the other side are the users of the service that goes dark when a bad rule locks the operator out. TODO: one concrete example from the demo.
 
+## How Deadman differs
+Existing tools add or expire access and poll for cleanup: they grant an IP for a while, then a scheduled sweep removes it. Deadman snapshots any security-group change and reverts it on a precise one-time timer unless a human confirms. Closest prior art found so far: tf_aws_lambda_ip_whitelist, aws-lambda-firewall (marekq/robothor), lambda-revoke-sg (bushong1), aws-security-group-add-ip-action (palmetto), and a 2016 Securosis auto-revert of any SG change with no human confirm. Devpost has not been searched yet, so this claim is provisional (see `docs/verification_m4.md`, 1f).
+
 ## Where AWS fits
 | Service | Role |
 |---|---|
