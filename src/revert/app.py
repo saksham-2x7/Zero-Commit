@@ -1,266 +1,257 @@
+"""
+Deadman Revert Lambda Handler.
+Spec §2, §4, §5.
+Dispatches both Scheduled invocations and Manual API invocations.
+"""
 import os
 import json
-from common.ddb import DecimalEncoder
 import time
-import boto3
-from botocore.exceptions import ClientError
+import uuid
+from typing import Dict, Any, Tuple
 
-from common.errors import get_error, DeadmanError
-from common.models import Op
+import botocore.exceptions
+
+from common.aws import get_ec2_client, get_dynamodb_client, get_scheduler_client
+from common.errors import DeadmanError, make_error_response
+from common.rules import describe_sg_rules, reconcile_revert_ops
 from common.states import (
-    T3_COND, T4_COND, T5_COND,
-    STATUS_PENDING, STATUS_REVERTING, STATUS_REVERTED, STATUS_PARTIAL_REVERT, STATUS_FAILED, STATUS_CONFIRMED
+    STATUS_PENDING,
+    STATUS_CONFIRMED,
+    STATUS_REVERTING,
+    STATUS_REVERTED,
+    STATUS_PARTIAL_REVERT,
+    STATUS_FAILED,
+    TRIGGER_SCHEDULE,
+    TRIGGER_MANUAL,
+    RESULT_ERROR,
 )
-from common.rules import reconcile_op
-from common.aws import get_ec2_client, get_scheduler_client
-from common.ddb import get_table
+from common.ddb import (
+    get_change,
+    t3_start_revert,
+    finish_revert,
+    release_sg_lock,
+)
 
-def handler(event, context):
-    try:
-        req_id = context.aws_request_id if hasattr(context, "aws_request_id") else "revert-lambda"
-        now = int(time.time())
-        table = get_table()
-        
-        is_manual = "requestContext" in event and "http" in event["requestContext"]
-        is_sched = event.get("trigger") == "SCHEDULE"
-        
-        if is_manual:
-            change_id = event.get("pathParameters", {}).get("id")
-            trigger = "MANUAL"
-        elif is_sched:
-            change_id = event.get("change_id")
-            trigger = "SCHEDULE"
-        else:
-            raise get_error("INVALID_REQUEST", "Unknown trigger")
-            
-        if not change_id:
-            raise get_error("INVALID_REQUEST", "Missing change_id")
-            
-        # Get item
-        res = table.get_item(Key={"pk": f"CHG#{change_id}"})
-        item = res.get("Item")
-        if not item:
-            if is_sched: return # no-op
-            raise get_error("CHANGE_NOT_FOUND", "Change not found")
-            
-        cur_st = item.get("status")
-        
-        if is_manual:
-            if cur_st in (STATUS_REVERTED, STATUS_PARTIAL_REVERT, STATUS_FAILED):
-                # if already terminal by manual/schedule, just return idempotent
-                return {
-                    "statusCode": 200,
-                    "body": json.dumps({
-                        "change_id": change_id,
-                        "status": cur_st,
-                        "revert_trigger": item.get("revert_trigger"),
-                        "reverted_at": int(item.get("reverted_at", now)),
-                        "idempotent": True,
-                        "revert_report": item.get("revert_report")
-                    }, cls=DecimalEncoder)
-                }
-            if cur_st == STATUS_REVERTING:
-                if int(item.get("revert_lease_until", 0)) > now:
-                    raise get_error("REVERT_IN_PROGRESS", "Revert in progress", change_id, STATUS_REVERTING)
-            elif cur_st != STATUS_PENDING:
-                raise get_error("CHANGE_NOT_PENDING", f"Change is {cur_st}", change_id, cur_st)
-                
-            if cur_st == STATUS_PENDING and not item.get("apply_done"):
-                if "apply_lease_until" in item and int(item["apply_lease_until"]) > now:
-                    raise get_error("NOT_APPLIED_YET", "Apply is in flight", change_id, STATUS_PENDING)
-                    
-        # T3 or T4
-        try:
-            if cur_st == STATUS_PENDING:
-                table.update_item(
-                    Key={"pk": f"CHG#{change_id}"},
-                    UpdateExpression="SET #st = :r, revert_trigger = :trig, revert_owner = :me, revert_lease_until = :lu",
-                    ConditionExpression=T3_COND,
-                    ExpressionAttributeNames={"#st": "status"},
-                    ExpressionAttributeValues={
-                        ":P": STATUS_PENDING,
-                        ":true": True,
-                        ":r": STATUS_REVERTING,
-                        ":trig": trigger,
-                        ":me": req_id,
-                        ":lu": now + 60,
-                        ":now": now
-                    }
-                )
-            elif cur_st == STATUS_REVERTING:
-                table.update_item(
-                    Key={"pk": f"CHG#{change_id}"},
-                    UpdateExpression="SET revert_owner = :me, revert_lease_until = :lu",
-                    ConditionExpression=T4_COND,
-                    ExpressionAttributeNames={"#st": "status"},
-                    ExpressionAttributeValues={
-                        ":R": STATUS_REVERTING,
-                        ":me": req_id,
-                        ":lu": now + 60,
-                        ":now": now
-                    }
-                )
-            else:
-                if is_sched: return # no-op
-                raise get_error("CHANGE_NOT_PENDING", f"Status changed to {cur_st}", change_id, cur_st)
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                if is_sched: return # no-op
-                res = table.get_item(Key={"pk": f"CHG#{change_id}"})
-                new_st = res.get("Item", {}).get("status") if res.get("Item") else None
-                if new_st in (STATUS_REVERTED, STATUS_PARTIAL_REVERT, STATUS_FAILED):
-                    return {
-                        "statusCode": 200,
-                        "body": json.dumps({
-                            "change_id": change_id,
-                            "status": new_st,
-                            "revert_trigger": res["Item"].get("revert_trigger"),
-                            "reverted_at": int(res["Item"].get("reverted_at", now)),
-                            "idempotent": True,
-                            "revert_report": res["Item"].get("revert_report")
-                        }, cls=DecimalEncoder)
-                    }
-                elif new_st == STATUS_REVERTING:
-                    raise get_error("REVERT_IN_PROGRESS", "Revert in progress", change_id, STATUS_REVERTING)
-                raise get_error("CHANGE_NOT_PENDING", f"Status changed to {new_st}", change_id, new_st)
-            raise e
-            
-        # We own the revert
-        # If manual or failure path, best-effort delete schedule
-        # Actually just do it best-effort for manual.
-        if trigger == "MANUAL":
-            scheduler = get_scheduler_client()
-            sched_group = os.environ.get("SCHEDULE_GROUP", f"deadman-{os.environ.get('STAGE', 'shared')}")
+
+def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    table_name = os.environ.get("TABLE_NAME", "deadman-changes-shared")
+    schedule_group = os.environ.get("SCHEDULE_GROUP", "deadman-shared")
+    managed_tag_key = os.environ.get("MANAGED_TAG_KEY", "deadman:managed")
+    managed_tag_val = os.environ.get("MANAGED_TAG_VALUE", "true")
+    stage_tag_key = os.environ.get("STAGE_TAG_KEY", "deadman:stage")
+    stage = os.environ.get("STAGE", "shared")
+    revert_lease_sec = int(os.environ.get("REVERT_LEASE_SECONDS", "60"))
+
+    # Dispatch logic per Spec §2:
+    # trigger == "SCHEDULE" -> scheduled path
+    # requestContext.http present -> manual path
+    # anything else -> error
+    is_scheduled = (event.get("trigger") == TRIGGER_SCHEDULE)
+    is_manual = bool(event.get("requestContext", {}).get("http"))
+
+    if not is_scheduled and not is_manual:
+        # Fallback check: stringified JSON in event or custom test payload
+        if isinstance(event.get("body"), str):
             try:
-                scheduler.delete_schedule(Name=f"dm-{change_id}", GroupName=sched_group)
-            except:
+                b = json.loads(event["body"])
+                if b.get("trigger") == TRIGGER_SCHEDULE:
+                    is_scheduled = True
+            except Exception:
                 pass
-                
-        # Reconcile ops
-        ops_data = item.get("delta", [])
-        ops = [Op.from_dict(d) for d in ops_data]
-        ops.reverse()
-        
-        ec2 = get_ec2_client()
-        sg_id = item["sg_id"]
-        
-        revert_report = []
-        has_error = False
-        has_success = False
-        precondition_error = None
-        
-        # Test describe to catch precondition errors (SG missing, AccessDenied)
-        try:
-            ec2.describe_security_group_rules(Filters=[{"Name": "group-id", "Values": [sg_id]}])
-        except ClientError as e:
-            precondition_error = str(e)
-            
-        if precondition_error:
-            # T7 Precondition Error
-            table.update_item(
-                Key={"pk": f"CHG#{change_id}"},
-                UpdateExpression="SET #st = :fail, failure_reason = :reas, reverted_at = :now",
-                ConditionExpression=T5_COND,
-                ExpressionAttributeNames={"#st": "status"},
-                ExpressionAttributeValues={
-                    ":R": STATUS_REVERTING,
-                    ":me": req_id,
-                    ":fail": STATUS_FAILED,
-                    ":reas": precondition_error,
-                    ":now": now
-                }
-            )
-            # release lock
-            try:
-                table.delete_item(Key={"pk": f"SGLOCK#{sg_id}"})
-            except: pass
-            if not is_manual: return
+
+    if not is_scheduled and not is_manual:
+        return make_error_response("INVALID_REQUEST", "Unrecognized invocation dispatch context", status_code=400)
+
+    if is_scheduled:
+        change_id = event.get("change_id")
+        trigger = TRIGGER_SCHEDULE
+    else:
+        path_params = event.get("pathParameters") or {}
+        change_id = path_params.get("id") or path_params.get("change_id")
+        trigger = TRIGGER_MANUAL
+
+    if not change_id:
+        return make_error_response("INVALID_REQUEST", "Missing change_id", status_code=400)
+
+    ddb_client = get_dynamodb_client()
+    ec2_client = get_ec2_client()
+    scheduler_client = get_scheduler_client()
+
+    owner_id = getattr(context, "aws_request_id", None) or str(uuid.uuid4())
+    now_ts = int(time.time())
+
+    # Step 1: Attempt T3 (or T4 takeover if expired)
+    try:
+        updated_item, is_idempotent = t3_start_revert(
+            ddb_client=ddb_client,
+            table_name=table_name,
+            change_id=change_id,
+            owner_id=owner_id,
+            trigger=trigger,
+            now_ts=now_ts,
+            lease_seconds=revert_lease_sec,
+        )
+    except DeadmanError as de:
+        if is_scheduled:
+            # Scheduled revert after confirm or terminal: log NOOP and return 200 OK
             return {
                 "statusCode": 200,
-                "body": json.dumps({
-                    "change_id": change_id,
-                    "status": STATUS_FAILED,
-                    "revert_trigger": trigger,
-                    "reverted_at": now,
-                    "idempotent": False,
-                    "revert_report": []
-                }, cls=DecimalEncoder)
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"status": "NOOP", "reason": de.code, "message": de.message}),
             }
-            
-        def authorize_fn(op):
-            ip_perm = {"IpProtocol": op.protocol, "FromPort": op.from_port, "ToPort": op.to_port, "IpRanges": [{"CidrIp": op.cidr}]}
-            ec2.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=[ip_perm])
-            
-        def revoke_fn(op):
-            ip_perm = {"IpProtocol": op.protocol, "FromPort": op.from_port, "ToPort": op.to_port, "IpRanges": [{"CidrIp": op.cidr}]}
-            ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[ip_perm])
-            
-        for op in ops:
-            try:
-                sg_res = ec2.describe_security_groups(GroupIds=[sg_id])
-                cur_rules = sg_res["SecurityGroups"][0].get("IpPermissions", [])
-                result = reconcile_op(op, cur_rules, authorize_fn, revoke_fn)
-                revert_report.append({"op_id": op.op_id, "result": result, "detail": ""})
-                if result == "REVERTED":
-                    has_success = True
-            except Exception as e:
-                revert_report.append({"op_id": op.op_id, "result": "ERROR", "detail": str(e)})
-                has_error = True
-                
-        # T5 or T6
-        final_st = STATUS_PARTIAL_REVERT if has_error and has_success else (STATUS_FAILED if has_error and not has_success else STATUS_REVERTED)
-        # Spec says FAILED if precondition error, nothing done. If some errored and no success but some SKIPPED? Spec: "all ops REVERTED or SKIPPED -> T5 REVERTED". "some ops ERROR, some done -> T6 PARTIAL". "precondition error, nothing done -> T7 FAILED". 
-        # So if ANY error -> PARTIAL_REVERT, unless all ops errored and none were REVERTED or SKIPPED? The spec says:
-        # T5: all ops REVERTED or SKIPPED -> REVERTED
-        # T6: some ops ERROR, some done -> PARTIAL_REVERT
-        # T7: precondition error, nothing done -> FAILED
-        if has_error:
-            has_done = any(r["result"] in ("REVERTED", "SKIPPED_ALREADY_SATISFIED") for r in revert_report)
-            if not has_done:
-                final_st = STATUS_FAILED
-            else:
-                final_st = STATUS_PARTIAL_REVERT
-        else:
-            final_st = STATUS_REVERTED
-            
-        try:
-            table.update_item(
-                Key={"pk": f"CHG#{change_id}"},
-                UpdateExpression="SET #st = :final, revert_report = :rep, reverted_at = :now",
-                ConditionExpression=T5_COND,
-                ExpressionAttributeNames={"#st": "status"},
-                ExpressionAttributeValues={
-                    ":R": STATUS_REVERTING,
-                    ":me": req_id,
-                    ":final": final_st,
-                    ":rep": revert_report,
-                    ":now": now
-                }
-            )
-            # release lock
-            try:
-                table.delete_item(Key={"pk": f"SGLOCK#{sg_id}"})
-            except: pass
-        except ClientError as e:
-            pass # Lost ownership
-            
-        if not is_manual:
-            return
-            
+        return de.to_response()
+    except Exception as e:
+        if is_scheduled:
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"status": "ERROR", "message": str(e)}),
+            }
+        return make_error_response("INTERNAL", f"Failed to initiate revert: {e}", change_id=change_id, status_code=500)
+
+    sg_id = updated_item.get("sg_id", "")
+    delta = updated_item.get("delta", [])
+    schedule_name = updated_item.get("schedule_name") or f"dm-{change_id}"
+
+    # If idempotent (already REVERTED)
+    if is_idempotent:
+        if is_scheduled:
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"status": "NOOP", "change_id": change_id, "message": "Already reverted"}),
+            }
         return {
             "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
                 "change_id": change_id,
-                "status": final_st,
-                "revert_trigger": trigger,
-                "reverted_at": now,
-                "idempotent": False,
-                "revert_report": revert_report
-            }, cls=DecimalEncoder)
+                "status": STATUS_REVERTED,
+                "revert_trigger": updated_item.get("revert_trigger") or trigger,
+                "reverted_at": updated_item.get("reverted_at") or now_ts,
+                "idempotent": True,
+                "revert_report": updated_item.get("revert_report") or [],
+            }),
         }
-    except DeadmanError as e:
-        if event.get("trigger") == "SCHEDULE": return
-        return {"statusCode": e.http_status, "body": json.dumps(e.to_dict(), cls=DecimalEncoder)}
+
+    # Manual path: best-effort DeleteSchedule
+    if is_manual:
+        try:
+            scheduler_client.delete_schedule(
+                Name=schedule_name,
+                GroupName=schedule_group,
+            )
+        except Exception:
+            pass
+
+    # Step 2: Precondition check (SG existence and management tags)
+    precondition_failed = False
+    failure_reason = ""
+    try:
+        sg_resp = ec2_client.describe_security_groups(GroupIds=[sg_id])
+        sgs = sg_resp.get("SecurityGroups", [])
+        if not sgs:
+            precondition_failed = True
+            failure_reason = f"Security group {sg_id} not found"
+        else:
+            sg_tags = {t.get("Key"): t.get("Value") for t in sgs[0].get("Tags", [])}
+            if sg_tags.get(managed_tag_key) != managed_tag_val or sg_tags.get(stage_tag_key) != stage:
+                precondition_failed = True
+                failure_reason = f"Security group {sg_id} tag check failed or tag removed"
+    except botocore.exceptions.ClientError as ce:
+        precondition_failed = True
+        failure_reason = f"Precondition error describing SG {sg_id}: {ce}"
     except Exception as e:
-        if event.get("trigger") == "SCHEDULE": return
-        return {"statusCode": 500, "body": json.dumps({"error": {"code": "INTERNAL", "message": str(e)}})}
+        precondition_failed = True
+        failure_reason = f"Precondition error: {e}"
+
+    if precondition_failed:
+        # T7: Precondition error, nothing done -> FAILED
+        revert_report = [
+            {"op_id": op.get("op_id", i), "result": RESULT_ERROR, "detail": failure_reason}
+            for i, op in enumerate(delta, start=1)
+        ]
+        try:
+            finish_revert(
+                ddb_client=ddb_client,
+                table_name=table_name,
+                change_id=change_id,
+                owner_id=owner_id,
+                target_status=STATUS_FAILED,
+                revert_report=revert_report,
+                now_ts=int(time.time()),
+                failure_reason=failure_reason,
+            )
+            release_sg_lock(ddb_client, table_name, sg_id, change_id)
+        except Exception:
+            pass
+
+        if is_scheduled:
+            return {"statusCode": 200, "body": json.dumps({"status": STATUS_FAILED, "reason": failure_reason})}
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "change_id": change_id,
+                "status": STATUS_FAILED,
+                "revert_trigger": trigger,
+                "reverted_at": int(time.time()),
+                "idempotent": False,
+                "revert_report": revert_report,
+            }),
+        }
+
+    # Step 3: Per-op reconcile
+    try:
+        final_status, revert_report = reconcile_revert_ops(ec2_client, sg_id, delta)
+    except Exception as e:
+        # Fallback: never raise, record outcome
+        final_status = STATUS_FAILED
+        revert_report = [
+            {"op_id": op.get("op_id", i), "result": RESULT_ERROR, "detail": str(e)}
+            for i, op in enumerate(delta, start=1)
+        ]
+
+    # Step 4: T5/T6/T7 - Update state in DynamoDB & release lock
+    reverted_at = int(time.time())
+    try:
+        finish_revert(
+            ddb_client=ddb_client,
+            table_name=table_name,
+            change_id=change_id,
+            owner_id=owner_id,
+            target_status=final_status,
+            revert_report=revert_report,
+            now_ts=reverted_at,
+        )
+    except Exception as e:
+        # Fallback if update fails
+        pass
+
+    release_sg_lock(ddb_client, table_name, sg_id, change_id)
+
+    # Step 5: Return response
+    if is_scheduled:
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "change_id": change_id,
+                "status": final_status,
+                "reverted_at": reverted_at,
+            }),
+        }
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "change_id": change_id,
+            "status": final_status,
+            "revert_trigger": trigger,
+            "reverted_at": reverted_at,
+            "idempotent": False,
+            "revert_report": revert_report,
+        }),
+    }

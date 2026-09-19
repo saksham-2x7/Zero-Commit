@@ -1,105 +1,72 @@
+"""
+Deadman Confirm Lambda Handler.
+Spec §2, §4, §5.
+"""
 import os
 import json
-from common.ddb import DecimalEncoder
 import time
-import boto3
-from botocore.exceptions import ClientError
+from typing import Dict, Any
 
-from common.errors import get_error, DeadmanError
-from common.states import T2_COND, STATUS_CONFIRMED, STATUS_PENDING
-from common.aws import get_scheduler_client
-from common.ddb import get_table
+from common.aws import get_dynamodb_client, get_scheduler_client
+from common.errors import DeadmanError, make_error_response
+from common.ddb import get_change, t2_confirm, release_sg_lock
 
-def handler(event, context):
+
+def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    table_name = os.environ.get("TABLE_NAME", "deadman-changes-shared")
+    schedule_group = os.environ.get("SCHEDULE_GROUP", "deadman-shared")
+
+    # Change ID from path parameters
+    path_params = event.get("pathParameters") or {}
+    change_id = path_params.get("id") or path_params.get("change_id")
+
+    if not change_id:
+        return make_error_response("INVALID_REQUEST", "Missing change id in request path", status_code=400)
+
+    ddb_client = get_dynamodb_client()
+    scheduler_client = get_scheduler_client()
+    now_ts = int(time.time())
+
     try:
-        change_id = event.get("pathParameters", {}).get("id")
-        if not change_id:
-            raise get_error("INVALID_REQUEST", "Missing change_id")
-            
-        now = int(time.time())
-        table = get_table()
-        
-        # Check current status for idempotency or WINDOW_EXPIRED
-        res = table.get_item(Key={"pk": f"CHG#{change_id}"})
-        item = res.get("Item")
-        if not item:
-            raise get_error("CHANGE_NOT_FOUND", "Change not found")
-            
-        if item.get("status") == STATUS_CONFIRMED:
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "change_id": change_id,
-                    "status": STATUS_CONFIRMED,
-                    "confirmed_at": int(item.get("confirmed_at", now)),
-                    "idempotent": True
-                })
-            }
-            
-        if item.get("status") != STATUS_PENDING:
-            raise get_error("CHANGE_NOT_PENDING", f"Change is {item.get('status')}", change_id, item.get("status"))
-            
-        if not item.get("apply_done"):
-            raise get_error("NOT_APPLIED_YET", "Apply is in flight", change_id, STATUS_PENDING)
-            
-        if now >= item.get("expires_at"):
-            raise get_error("WINDOW_EXPIRED", "Late confirm", change_id, STATUS_PENDING)
-            
-        # T2
-        try:
-            table.update_item(
-                Key={"pk": f"CHG#{change_id}"},
-                UpdateExpression="SET #st = :c, confirmed_at = :now",
-                ConditionExpression=T2_COND,
-                ExpressionAttributeNames={"#st": "status"},
-                ExpressionAttributeValues={
-                    ":P": STATUS_PENDING,
-                    ":c": STATUS_CONFIRMED,
-                    ":true": True,
-                    ":now": now
-                }
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                res = table.get_item(Key={"pk": f"CHG#{change_id}"})
-                cur_st = res.get("Item", {}).get("status") if res.get("Item") else None
-                if cur_st == STATUS_CONFIRMED:
-                    return {
-                        "statusCode": 200,
-                        "body": json.dumps({
-                            "change_id": change_id,
-                            "status": STATUS_CONFIRMED,
-                            "confirmed_at": int(res["Item"].get("confirmed_at", now)),
-                            "idempotent": True
-                        })
-                    }
-                raise get_error("CHANGE_NOT_PENDING", f"Status changed to {cur_st}", change_id, cur_st)
-            raise e
-            
-        # DeleteSchedule
-        scheduler = get_scheduler_client()
-        sched_group = os.environ.get("SCHEDULE_GROUP", f"deadman-{os.environ.get('STAGE', 'shared')}")
-        try:
-            scheduler.delete_schedule(Name=f"dm-{change_id}", GroupName=sched_group)
-        except Exception:
-            pass # ResourceNotFound OK
-            
-        # Release lock
-        try:
-            table.delete_item(Key={"pk": f"SGLOCK#{item['sg_id']}"})
-        except:
-            pass
-            
+        # Perform T2 transition
+        updated_item, is_idempotent = t2_confirm(
+            ddb_client=ddb_client,
+            table_name=table_name,
+            change_id=change_id,
+            now_ts=now_ts,
+        )
+
+        sg_id = updated_item.get("sg_id", "")
+        schedule_name = updated_item.get("schedule_name") or f"dm-{change_id}"
+
+        # Clean up schedule and lock if freshly confirmed
+        if not is_idempotent:
+            try:
+                scheduler_client.delete_schedule(
+                    Name=schedule_name,
+                    GroupName=schedule_group,
+                )
+            except Exception:
+                # ResourceNotFound or already deleted is expected & OK
+                pass
+
+            if sg_id:
+                release_sg_lock(ddb_client, table_name, sg_id, change_id)
+
+        confirmed_at = updated_item.get("confirmed_at") or now_ts
+
         return {
             "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
                 "change_id": change_id,
-                "status": STATUS_CONFIRMED,
-                "confirmed_at": now,
-                "idempotent": False
-            })
+                "status": "CONFIRMED",
+                "confirmed_at": confirmed_at,
+                "idempotent": is_idempotent,
+            }),
         }
-    except DeadmanError as e:
-        return {"statusCode": e.http_status, "body": json.dumps(e.to_dict(), cls=DecimalEncoder)}
+
+    except DeadmanError as de:
+        return de.to_response()
     except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": {"code": "INTERNAL", "message": str(e)}})}
+        return make_error_response("INTERNAL", f"Confirm failed: {e}", change_id=change_id, status_code=500)
