@@ -6,18 +6,19 @@ import os
 import json
 import time
 import datetime
-import uuid
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 
 import botocore.exceptions
 
 from common.aws import get_ec2_client, get_dynamodb_client, get_scheduler_client
-from common.errors import DeadmanError, make_error_response
+from common.errors import DeadmanError, make_error_response, check_required_env_vars
 from common.models import validate_create_payload
 from common.rules import describe_sg_rules, plan_delta, apply_cut_ops, reconcile_revert_ops
 from common.states import (
     STATUS_PENDING,
     STATUS_REVERTED,
+    STATUS_FAILED,
     TRIGGER_APPLY_FAILURE,
 )
 from common.ddb import (
@@ -30,14 +31,16 @@ from common.ddb import (
     t8_schedule_failed,
 )
 
+logger = logging.getLogger(__name__)
+
+REQUIRED_ENV_VARS = ["TABLE_NAME", "SCHEDULE_GROUP", "REVERT_FN_ARN", "SCHEDULER_ROLE_ARN", "STAGE"]
+
 
 def generate_change_id() -> str:
     """Generate ULID-like 26-char Crockford Base32 identifier."""
-    # Millisecond timestamp (48-bit) + 80-bit random
     t_ms = int(time.time() * 1000)
     rand_bytes = os.urandom(10)
     b = t_ms.to_bytes(6, byteorder="big") + rand_bytes
-    # Crockford's Base32 alphabet
     crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     num = int.from_bytes(b, byteorder="big")
     chars = []
@@ -54,14 +57,20 @@ def format_at_schedule(expires_at: int) -> str:
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    table_name = os.environ.get("TABLE_NAME", "deadman-changes-shared")
-    schedule_group = os.environ.get("SCHEDULE_GROUP", "deadman-shared")
-    revert_fn_arn = os.environ.get("REVERT_FN_ARN", "")
-    scheduler_role_arn = os.environ.get("SCHEDULER_ROLE_ARN", "")
+    # Fail fast: mandatory environment variables
+    env_err = check_required_env_vars(REQUIRED_ENV_VARS, logger)
+    if env_err:
+        return env_err
+
+    table_name = os.environ["TABLE_NAME"]
+    schedule_group = os.environ["SCHEDULE_GROUP"]
+    revert_fn_arn = os.environ["REVERT_FN_ARN"]
+    scheduler_role_arn = os.environ["SCHEDULER_ROLE_ARN"]
+    stage = os.environ["STAGE"]
+
     managed_tag_key = os.environ.get("MANAGED_TAG_KEY", "deadman:managed")
     managed_tag_val = os.environ.get("MANAGED_TAG_VALUE", "true")
     stage_tag_key = os.environ.get("STAGE_TAG_KEY", "deadman:stage")
-    stage = os.environ.get("STAGE", "shared")
     min_ttl = int(os.environ.get("MIN_TTL_SECONDS", "60"))
     max_ttl = int(os.environ.get("MAX_TTL_SECONDS", "600"))
     apply_lease_sec = int(os.environ.get("APPLY_LEASE_SECONDS", "20"))
@@ -156,78 +165,55 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except DeadmanError as de:
         return de.to_response()
     except Exception as e:
-        return make_error_response("INTERNAL", f"Apply initialization failed: {e}", status_code=500)
+        logger.exception("Apply initialization failed before T0 write: %s", e)
+        err_class = e.__class__.__name__
+        short_msg = str(e).split("\n")[0][:200] if str(e) else "Initialization error"
+        return make_error_response(
+            "INTERNAL",
+            f"Apply initialization failed ({err_class}): {short_msg}",
+            status_code=500,
+            exception_class=err_class,
+        )
 
-    # Step 6: Create EventBridge schedule (Arming)
+    # ── Catch-all wrapper after the first DynamoDB write ──
     schedule_created = False
     schedule_expr = format_at_schedule(expires_at)
     target_input = json.dumps({"trigger": "SCHEDULE", "change_id": change_id})
 
     try:
-        scheduler_client.create_schedule(
-            Name=schedule_name,
-            GroupName=schedule_group,
-            ScheduleExpression=schedule_expr,
-            FlexibleTimeWindow={"Mode": "OFF"},
-            ActionAfterCompletion="DELETE",
-            Target={
-                "Arn": revert_fn_arn,
-                "RoleArn": scheduler_role_arn,
-                "Input": target_input,
-            },
-        )
-        schedule_created = True
-    except botocore.exceptions.ClientError as ce:
-        code = ce.response.get("Error", {}).get("Code", "")
-        if code == "ConflictException":
-            # Schedule already exists with this name; treat as armed per spec
-            schedule_created = True
-        else:
-            # T8 failure path: nothing applied
-            try:
-                t8_schedule_failed(ddb_client, table_name, change_id, f"Schedule creation failed: {ce}")
-                release_sg_lock(ddb_client, table_name, sg_id, change_id)
-            except Exception:
-                pass
-            return make_error_response(
-                "SCHEDULE_FAILED",
-                f"Failed to create schedule: {ce}",
-                change_id=change_id,
-                status="FAILED",
-                status_code=502,
+        # Step 6: Create EventBridge schedule (Arming)
+        try:
+            scheduler_client.create_schedule(
+                Name=schedule_name,
+                GroupName=schedule_group,
+                ScheduleExpression=schedule_expr,
+                FlexibleTimeWindow={"Mode": "OFF"},
+                ActionAfterCompletion="DELETE",
+                Target={
+                    "Arn": revert_fn_arn,
+                    "RoleArn": scheduler_role_arn,
+                    "Input": target_input,
+                },
             )
-    except Exception as e:
-        try:
-            t8_schedule_failed(ddb_client, table_name, change_id, f"Schedule creation failed: {e}")
-            release_sg_lock(ddb_client, table_name, sg_id, change_id)
-        except Exception:
-            pass
-        return make_error_response(
-            "SCHEDULE_FAILED",
-            f"Failed to create schedule: {e}",
-            change_id=change_id,
-            status="FAILED",
-            status_code=502,
-        )
+            schedule_created = True
+        except botocore.exceptions.ClientError as ce:
+            code = ce.response.get("Error", {}).get("Code", "")
+            if code == "ConflictException":
+                schedule_created = True
+            else:
+                raise ce
 
-    # Step 7: T1 fence before cutting ops
-    try:
+        # Step 7: T1 fence before cutting ops
         t1_fence(ddb_client, table_name, change_id, now_ts=int(time.time()), lease_seconds=apply_lease_sec)
-    except DeadmanError as de:
-        # Revert might have won or status changed
-        return de.to_response()
-    except Exception as e:
-        return make_error_response("INTERNAL", f"T1 fence failed: {e}", change_id=change_id, status_code=500)
 
-    # Step 8: Cut ops
-    cut_success = False
-    updated_delta = delta
-    try:
-        updated_delta = apply_cut_ops(ec2_client, sg_id, delta)
-        cut_success = True
-    except Exception as apply_err:
-        # Failure path after arming: run T3 with APPLY_FAILURE, reconcile, best-effort DeleteSchedule
+        # Step 8: Cut ops
+        cut_success = False
+        updated_delta = delta
         try:
+            updated_delta = apply_cut_ops(ec2_client, sg_id, delta)
+            cut_success = True
+        except Exception as apply_err:
+            logger.exception("Apply cut failed, reconciling and reverting: %s", apply_err)
             owner_id = f"apply_failure_{change_id}"
             t3_start_revert(
                 ddb_client=ddb_client,
@@ -237,7 +223,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 trigger=TRIGGER_APPLY_FAILURE,
                 now_ts=int(time.time()),
             )
-            # Reconcile applied ops
             final_status, revert_report = reconcile_revert_ops(ec2_client, sg_id, updated_delta)
             finish_revert(
                 ddb_client=ddb_client,
@@ -250,60 +235,103 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 failure_reason=f"Apply cut failed: {apply_err}",
             )
             release_sg_lock(ddb_client, table_name, sg_id, change_id)
-            # Best-effort DeleteSchedule
             try:
                 scheduler_client.delete_schedule(Name=schedule_name, GroupName=schedule_group)
             except Exception:
                 pass
 
-            if final_status == STATUS_REVERTED:
-                return make_error_response(
-                    "APPLY_FAILED_REVERTED",
-                    f"Apply failed during cut; all changes reverted: {apply_err}",
-                    change_id=change_id,
-                    status=final_status,
-                    status_code=500,
-                )
-            else:
-                return make_error_response(
-                    "APPLY_FAILED_REVERT_INCOMPLETE",
-                    f"Apply failed during cut and revert incomplete ({final_status}): {apply_err}",
-                    change_id=change_id,
-                    status=final_status,
-                    status_code=500,
-                )
-        except Exception as recovery_err:
+            err_code = "APPLY_FAILED_REVERTED" if final_status == STATUS_REVERTED else "APPLY_FAILED_REVERT_INCOMPLETE"
+            err_class = apply_err.__class__.__name__
+            short_msg = str(apply_err).split("\n")[0][:200]
             return make_error_response(
-                "APPLY_FAILED_REVERT_INCOMPLETE",
-                f"Apply cut failed ({apply_err}) and recovery failed ({recovery_err})",
+                err_code,
+                f"Apply cut failed ({err_class}): {short_msg}",
                 change_id=change_id,
-                status="FAILED",
+                status=final_status,
                 status_code=500,
+                exception_class=err_class,
             )
 
-    # Step 9: T1b - cut done
-    try:
+        # Step 9: T1b - cut done
         t1b_cut_done(ddb_client, table_name, change_id, updated_delta)
+
+        # Step 10: 201 Created Response
+        response_body = {
+            "change_id": change_id,
+            "status": STATUS_PENDING,
+            "sg_id": sg_id,
+            "ttl_seconds": ttl_seconds,
+            "created_at": now_ts,
+            "expires_at": expires_at,
+            "server_time": int(time.time()),
+            "schedule_name": schedule_name,
+            "delta": updated_delta,
+        }
+
+        return {
+            "statusCode": 201,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(response_body),
+        }
+
     except DeadmanError as de:
+        logger.exception("DeadmanError in apply after T0 write: %s", de)
+        # Move item to FAILED only if status is PENDING and apply_done is false
+        try:
+            t8_schedule_failed(
+                ddb_client,
+                table_name,
+                change_id,
+                f"{de.code}: {de.message}",
+            )
+        except Exception:
+            pass
+
+        if sg_id and change_id:
+            try:
+                release_sg_lock(ddb_client, table_name, sg_id, change_id)
+            except Exception:
+                pass
+
         return de.to_response()
+
     except Exception as e:
-        return make_error_response("INTERNAL", f"T1b mark cut done failed: {e}", change_id=change_id, status_code=500)
+        logger.exception("Unexpected exception in apply after T0 write: %s", e)
+        err_class = e.__class__.__name__
+        short_msg = str(e).split("\n")[0][:200] if str(e) else "An unexpected error occurred"
 
-    # Step 10: 201 Created Response
-    response_body = {
-        "change_id": change_id,
-        "status": STATUS_PENDING,
-        "sg_id": sg_id,
-        "ttl_seconds": ttl_seconds,
-        "created_at": now_ts,
-        "expires_at": expires_at,
-        "server_time": int(time.time()),
-        "schedule_name": schedule_name,
-        "delta": updated_delta,
-    }
+        # Move item to FAILED (only if status is PENDING and apply_done is false)
+        try:
+            t8_schedule_failed(
+                ddb_client,
+                table_name,
+                change_id,
+                f"{err_class}: {short_msg}",
+            )
+        except Exception as cleanup_err:
+            logger.exception("Could not mark item as FAILED in cleanup: %s", cleanup_err)
 
-    return {
-        "statusCode": 201,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(response_body),
-    }
+        # Release SGLOCK only if active_change_id is this change
+        if sg_id and change_id:
+            try:
+                release_sg_lock(ddb_client, table_name, sg_id, change_id)
+            except Exception as lock_err:
+                logger.exception("Could not release SGLOCK in cleanup: %s", lock_err)
+
+        if not schedule_created:
+            return make_error_response(
+                "SCHEDULE_FAILED",
+                f"Failed to create schedule ({err_class}): {short_msg}",
+                change_id=change_id,
+                status="FAILED",
+                status_code=502,
+                exception_class=err_class,
+            )
+        return make_error_response(
+            "INTERNAL",
+            f"Apply failed ({err_class}): {short_msg}",
+            change_id=change_id,
+            status="FAILED",
+            status_code=500,
+            exception_class=err_class,
+        )

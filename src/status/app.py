@@ -5,15 +5,24 @@ Spec §2, §5.
 import os
 import json
 import time
+import logging
 from typing import Dict, Any
 
 from common.aws import get_dynamodb_client
-from common.errors import DeadmanError, make_error_response
+from common.errors import DeadmanError, make_error_response, check_required_env_vars
 from common.ddb import get_change
+
+logger = logging.getLogger(__name__)
+
+REQUIRED_ENV_VARS = ["TABLE_NAME"]
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    table_name = os.environ.get("TABLE_NAME", "deadman-changes-shared")
+    env_err = check_required_env_vars(REQUIRED_ENV_VARS, logger)
+    if env_err:
+        return env_err
+
+    table_name = os.environ["TABLE_NAME"]
 
     path_params = event.get("pathParameters") or {}
     change_id = path_params.get("id") or path_params.get("change_id")
@@ -51,4 +60,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except DeadmanError as de:
         return de.to_response()
     except Exception as e:
-        return make_error_response("INTERNAL", f"Status fetch failed: {e}", change_id=change_id, status_code=500)
+        logger.exception("Status fetch failed: %s", e)
+        err_class = e.__class__.__name__
+        short_msg = str(e).split("\n")[0][:200] if str(e) else "Status fetch failed"
+        return make_error_response(
+            "INTERNAL",
+            f"Status fetch failed ({err_class}): {short_msg}",
+            change_id=change_id,
+            status_code=500,
+            exception_class=err_class,
+        )

@@ -7,12 +7,13 @@ import os
 import json
 import time
 import uuid
+import logging
 from typing import Dict, Any, Tuple
 
 import botocore.exceptions
 
 from common.aws import get_ec2_client, get_dynamodb_client, get_scheduler_client
-from common.errors import DeadmanError, make_error_response
+from common.errors import DeadmanError, make_error_response, check_required_env_vars
 from common.rules import describe_sg_rules, reconcile_revert_ops
 from common.states import (
     STATUS_PENDING,
@@ -32,14 +33,22 @@ from common.ddb import (
     release_sg_lock,
 )
 
+logger = logging.getLogger(__name__)
+
+REQUIRED_ENV_VARS = ["TABLE_NAME", "SCHEDULE_GROUP", "STAGE"]
+
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    table_name = os.environ.get("TABLE_NAME", "deadman-changes-shared")
-    schedule_group = os.environ.get("SCHEDULE_GROUP", "deadman-shared")
+    env_err = check_required_env_vars(REQUIRED_ENV_VARS, logger)
+    if env_err:
+        return env_err
+
+    table_name = os.environ["TABLE_NAME"]
+    schedule_group = os.environ["SCHEDULE_GROUP"]
     managed_tag_key = os.environ.get("MANAGED_TAG_KEY", "deadman:managed")
     managed_tag_val = os.environ.get("MANAGED_TAG_VALUE", "true")
     stage_tag_key = os.environ.get("STAGE_TAG_KEY", "deadman:stage")
-    stage = os.environ.get("STAGE", "shared")
+    stage = os.environ["STAGE"]
     revert_lease_sec = int(os.environ.get("REVERT_LEASE_SECONDS", "60"))
 
     # Dispatch logic per Spec §2:
@@ -101,13 +110,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
         return de.to_response()
     except Exception as e:
+        logger.exception("Failed to initiate revert: %s", e)
         if is_scheduled:
             return {
                 "statusCode": 200,
                 "headers": {"Content-Type": "application/json"},
                 "body": json.dumps({"status": "ERROR", "message": str(e)}),
             }
-        return make_error_response("INTERNAL", f"Failed to initiate revert: {e}", change_id=change_id, status_code=500)
+        err_class = e.__class__.__name__
+        short_msg = str(e).split("\n")[0][:200] if str(e) else "Failed to initiate revert"
+        return make_error_response(
+            "INTERNAL",
+            f"Failed to initiate revert ({err_class}): {short_msg}",
+            change_id=change_id,
+            status_code=500,
+            exception_class=err_class,
+        )
 
     sg_id = updated_item.get("sg_id", "")
     delta = updated_item.get("delta", [])

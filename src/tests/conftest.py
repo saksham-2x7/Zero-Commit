@@ -21,8 +21,11 @@ class MockSchedulerClient:
         self.schedules = {}
         self.should_fail_create = False
         self.create_error_code = None
+        self.create_exception = None
 
     def create_schedule(self, Name, GroupName, ScheduleExpression, FlexibleTimeWindow, Target, ActionAfterCompletion="DELETE"):
+        if self.create_exception is not None:
+            raise self.create_exception
         if self.should_fail_create:
             from botocore.exceptions import ClientError
             raise ClientError(

@@ -120,16 +120,34 @@ def transact_put_change_and_lock(
         if code == "TransactionCanceledException":
             cancellation_reasons = e.response.get("CancellationReasons", [])
             if len(cancellation_reasons) > 1 and cancellation_reasons[1].get("Code") == "ConditionalCheckFailed":
+                holding_change_id: Optional[str] = None
+                try:
+                    lock_resp = ddb_client.get_item(
+                        TableName=table_name,
+                        Key={"pk": {"S": lock_pk}},
+                        ConsistentRead=True,
+                    )
+                    lock_item = lock_resp.get("Item")
+                    if lock_item and "active_change_id" in lock_item:
+                        holding_change_id = lock_item["active_change_id"].get("S")
+                except Exception:
+                    pass
+                msg = f"Active change already exists on security group {sg_id}"
+                if holding_change_id:
+                    msg += f" (held by {holding_change_id})"
                 raise DeadmanError(
                     "SG_BUSY",
-                    f"Active change already exists on security group {sg_id}",
+                    msg,
+                    change_id=holding_change_id,
                     status_code=409,
+                    exception_class="DeadmanError",
                 )
             if len(cancellation_reasons) > 0 and cancellation_reasons[0].get("Code") == "ConditionalCheckFailed":
                 raise DeadmanError(
                     "INVALID_REQUEST",
                     f"Change ID {change_data['change_id']} already exists",
                     status_code=400,
+                    exception_class="DeadmanError",
                 )
         raise e
 
@@ -468,6 +486,7 @@ def t8_schedule_failed(
         ExpressionAttributeValues={
             ":P": {"S": STATUS_PENDING},
             ":F": {"S": STATUS_FAILED},
+            ":false": {"BOOL": False},
             ":reason": {"S": failure_reason},
         },
         ReturnValues="ALL_NEW",
