@@ -1,6 +1,1 @@
-{
-  "id": "chg_123",
-  "status": "REVERTED",
-  "reason": "MANUAL",
-  "sg_id": "sg-123"
-}
+{"change_id":"01J...","status":"REVERTED","sg_id":"sg-0abc","ttl_seconds":90,"created_at":1758300000,"expires_at":1758300090,"server_time":1758300095,"apply_done":true,"delta":[],"confirmed_at":null,"reverted_at":1758300031,"revert_trigger":"MANUAL","revert_report":[{"op_id":1,"result":"REVERTED","detail":""}],"failure_reason":null}

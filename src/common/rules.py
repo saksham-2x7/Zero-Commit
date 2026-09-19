@@ -1,42 +1,64 @@
-# src/common/rules.py
-from .models import Rule, Op
-from .errors import APIError
-from .aws import get_ec2_client
+from .models import Op
+from .errors import get_error
 
-def plan_delta(requested_ops, current_rules):
-    """
-    requested_ops: List[Op] for the requested additions/removals
-    current_rules: List[Rule] currently on the SG
-    Returns list of Op (only EFFECTIVE ops).
-    Raises APIError(BAD_REQUEST) if RULE_ALREADY_EXISTS or RULE_NOT_FOUND
-    """
-    current_set = {r.to_tuple() for r in current_rules}
-    effective_ops = []
+def _get_tuple_key(rule):
+    source = "cidr"
+    cidr = rule.get("CidrIpv4")
+    if not cidr:
+        # We only support IPv4 CIDR per spec
+        return None
+    return (
+        rule.get("IpProtocol", "-1"),
+        rule.get("FromPort", -1),
+        rule.get("ToPort", -1),
+        source,
+        cidr
+    )
+
+def plan_delta(current_rules: list, ops: list[Op]):
+    # returns effective ops or raises Error
+    current_tuples = set(_get_tuple_key(r) for r in current_rules if _get_tuple_key(r))
     
-    for op in requested_ops:
-        rtup = op.rule.to_tuple()
+    effective_ops = []
+    for op in ops:
+        tk = op.tuple_key
         if op.action == "AUTHORIZE":
-            if rtup in current_set:
-                raise APIError("BAD_REQUEST", f"RULE_ALREADY_EXISTS: {rtup}")
+            if tk in current_tuples:
+                raise get_error("RULE_ALREADY_EXISTS", f"Rule {tk} already exists")
             effective_ops.append(op)
         elif op.action == "REVOKE":
-            if rtup not in current_set:
-                raise APIError("BAD_REQUEST", f"RULE_NOT_FOUND: {rtup}")
+            if tk not in current_tuples:
+                raise get_error("RULE_NOT_FOUND", f"Rule {tk} not found")
             effective_ops.append(op)
-            
+    
     return effective_ops
 
-def reconcile(op: Op, sg_id: str):
-    if not op.applied:
-        return
-    ec2 = get_ec2_client()
-    if op.action == "REVOKE":
-        ec2.authorize_security_group_ingress(
-            GroupId=sg_id,
-            IpPermissions=[op.rule.to_aws_dict()]
-        )
-    elif op.action == "AUTHORIZE":
-        ec2.revoke_security_group_ingress(
-            GroupId=sg_id,
-            IpPermissions=[op.rule.to_aws_dict()]
-        )
+def reconcile_op(op: Op, current_rules: list, authorize_fn, revoke_fn):
+    if op.applied is False:
+        return "SKIPPED_ALREADY_SATISFIED"
+        
+    current_tuples = set(_get_tuple_key(r) for r in current_rules if _get_tuple_key(r))
+    tk = op.tuple_key
+    
+    try:
+        if op.action == "AUTHORIZE":
+            # undo = revoke
+            if tk in current_tuples:
+                revoke_fn(op)
+                return "REVERTED"
+            else:
+                return "SKIPPED_ALREADY_SATISFIED"
+        else:
+            # REVOKE, undo = authorize
+            if tk in current_tuples:
+                return "SKIPPED_ALREADY_SATISFIED"
+            else:
+                try:
+                    authorize_fn(op)
+                    return "REVERTED"
+                except Exception as e:
+                    if "Duplicate" in str(e): # pseudo check for duplicate error
+                        return "SKIPPED_ALREADY_SATISFIED"
+                    raise e
+    except Exception as e:
+        raise e

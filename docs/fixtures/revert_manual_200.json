@@ -1,4 +1,1 @@
-{
-  "id": "chg_123",
-  "status": "REVERTING"
-}
+{"change_id":"01J...","status":"REVERTED","revert_trigger":"MANUAL","reverted_at":1758300031,"idempotent":false,"revert_report":[{"op_id":1,"result":"REVERTED","detail":""}]}

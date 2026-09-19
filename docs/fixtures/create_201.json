@@ -1,1 +1,1 @@
-{ "id": "123", "status": "PENDING", "expires_at": "2026-09-19T10:00:00Z" }
+{"change_id":"01J...","status":"PENDING","sg_id":"sg-0abc","ttl_seconds":90,"created_at":1758300000,"expires_at":1758300090,"server_time":1758300003,"schedule_name":"dm-01J...","delta":[{"op_id":1,"action":"REVOKE","protocol":"tcp","from_port":80,"to_port":80,"cidr":"0.0.0.0/0","applied":null}]}

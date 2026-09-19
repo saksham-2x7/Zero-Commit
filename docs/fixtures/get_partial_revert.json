@@ -1,5 +1,1 @@
-{
-  "id": "chg_123",
-  "status": "PARTIAL_REVERT",
-  "sg_id": "sg-123"
-}
+{"change_id":"01J...","status":"PARTIAL_REVERT","sg_id":"sg-0abc","ttl_seconds":90,"created_at":1758300000,"expires_at":1758300090,"server_time":1758300095,"apply_done":true,"delta":[],"confirmed_at":null,"reverted_at":1758300093,"revert_trigger":"SCHEDULE","revert_report":[{"op_id":1,"result":"ERROR","detail":"AccessDenied"}],"failure_reason":null}

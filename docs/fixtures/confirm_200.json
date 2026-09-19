@@ -1,4 +1,1 @@
-{
-  "id": "chg_123",
-  "status": "CONFIRMED"
-}
+{"change_id":"01J...","status":"CONFIRMED","confirmed_at":1758300040,"idempotent":false}
