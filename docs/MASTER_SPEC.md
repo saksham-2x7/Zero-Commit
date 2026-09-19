@@ -12,7 +12,7 @@
 # MASTER SPEC v1.0 (frozen; replaces v0.9)
 
 **Status:** verification NOT RUN. Every AWS-behaviour claim is ASSUMPTION-n (A-n) and is tested in §1.
-**Locked:** Ship It track. Region `ap-south-1`. Python 3.11 + boto3. No Bedrock. AWS only (infra in SAM, frontend on S3 + CloudFront). One shared AWS account. 28 hours total. Scope is security-group IPv4 ingress rules. Timestamps are epoch seconds. `<stage>` is `shared` or `m1`..`m4`.
+**Locked:** Ship It track. Region `ap-southeast-2`. Python 3.11 + boto3. No Bedrock. AWS only (infra in SAM, frontend on S3 + CloudFront). One shared AWS account. 28 hours total. Scope is security-group IPv4 ingress rules. Timestamps are epoch seconds. `<stage>` is `shared` or `m1`..`m4`.
 
 | M | Person | Role |
 |---|---|---|
@@ -65,7 +65,7 @@
 
 | # | Owner | Test | Pass/fail | AWS-only fallback |
 |---|---|---|---|---|
-| 1a | M1 | 10 one-time schedules per T ∈ {45, 60, 90, 120} s, non-minute-aligned, FlexibleTimeWindow OFF, targeting a probe Lambda that logs `fire_ts` (A-1: `at()` honours seconds in ap-south-1) | A T passes if 10/10 satisfy −1 ≤ (fire_ts − at_ts) ≤ 15 s (A-2: never early, bounded delay). **Demo TTL = smallest passing T.** `MIN_TTL_SECONDS = max(60, T)`. | Use TTL 180–300 s and cut the video. If seconds aren't honoured or delay exceeds 60 s: Step Functions Standard (`Wait` → revert). |
+| 1a | M1 | 10 one-time schedules per T ∈ {45, 60, 90, 120} s, non-minute-aligned, FlexibleTimeWindow OFF, targeting a probe Lambda that logs `fire_ts` (A-1: `at()` honours seconds in ap-southeast-2) | A T passes if 10/10 satisfy −1 ≤ (fire_ts − at_ts) ≤ 15 s (A-2: never early, bounded delay). **Demo TTL = smallest passing T.** `MIN_TTL_SECONDS = max(60, T)`. | Use TTL 180–300 s and cut the video. If seconds aren't honoured or delay exceeds 60 s: Step Functions Standard (`Wait` → revert). |
 | 1b | M1 | Apply role has only `scheduler:CreateSchedule` on `schedule/deadman-<stage>/*` (A-4) and `iam:PassRole` on the scheduler role with `iam:PassedToService=scheduler.amazonaws.com` (A-5). Test DynamoDB `TransactWriteItems` with only per-item actions (A-6). | CreateSchedule succeeds with exactly this. It fails with AccessDenied for any other role or group. Record whether GetSchedule and DeleteSchedule are also needed. | Drop the PassedToService condition and keep the role-ARN-scoped PassRole. For DynamoDB, grant what the AccessDenied message names, scoped to the table. |
 | 1c | M4 | Authorize tcp/8080 from 203.0.113.0/24, record the id (A). Revoke, re-add the same tuple, record the new id (B). Then: (i) revoke via IpPermissions with a different Description; (ii) poll describe after authorize. | Record A ≠ B (A-9). Match key is `(protocol, from, to, source_type, source)` regardless. (i) rule removed (A-10). (ii) rule visible within 5 s in 20/20 trials (A-11). | (i) fails: revoke by fresh rule id after tuple match, which needs the security-group-rule ARN in IAM (A-12). (ii) fails: poll up to 10 s with backoff. |
 | 1d | M4 | For Authorize/RevokeSecurityGroupIngress and DescribeSecurityGroups/Rules, test conditions `aws:ResourceTag/deadman:managed=true` and `aws:ResourceTag/deadman:stage=<stage>` (A-13). | Filled matrix (action → resource-level? tag enforced?). Authorize/Revoke on an SG with a missing or wrong tag returns AccessDenied. Describe* expected to need `"*"` (A-14). | Resource `"*"` plus a mandatory in-code tag check before every mutation and at revert. Document it as a weaker guardrail. |
