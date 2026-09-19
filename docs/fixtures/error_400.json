@@ -1,4 +1,6 @@
 {
-  "error": "BAD_REQUEST",
-  "message": "Bad Request"
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Bad Request"
+  }
 }

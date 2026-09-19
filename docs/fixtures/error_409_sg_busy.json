@@ -1,4 +1,6 @@
 {
-  "error": "SG_BUSY",
-  "message": "Security Group is busy"
+  "error": {
+    "code": "SG_BUSY",
+    "message": "Security Group is busy"
+  }
 }

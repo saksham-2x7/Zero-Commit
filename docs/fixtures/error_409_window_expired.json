@@ -1,4 +1,6 @@
 {
-  "error": "WINDOW_EXPIRED",
-  "message": "Attempt to confirm after TTL expired"
+  "error": {
+    "code": "WINDOW_EXPIRED",
+    "message": "Attempt to confirm after TTL expired"
+  }
 }

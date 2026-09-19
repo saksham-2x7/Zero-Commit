@@ -1,4 +1,6 @@
 {
-  "error": "NOT_FOUND",
-  "message": "Change ID not found"
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Change ID not found"
+  }
 }

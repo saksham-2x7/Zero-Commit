@@ -1,4 +1,6 @@
 {
-  "error": "INTERNAL_ERROR",
-  "message": "Internal Server Error"
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "Internal Server Error"
+  }
 }

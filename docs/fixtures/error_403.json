@@ -1,4 +1,6 @@
 {
-  "error": "SG_NOT_MANAGED",
-  "message": "Target SG is not managed by Deadman"
+  "error": {
+    "code": "SG_NOT_MANAGED",
+    "message": "Target SG is not managed by Deadman"
+  }
 }
