@@ -333,7 +333,7 @@ Outputs:
   TableName:
     Value: !Ref DeadmanTable
   TargetSgId:
-    Value: !Ref TargetSecurityGroup
+    Value: !GetAtt TargetSecurityGroup.GroupId
   TargetInstancePublicIp:
     Condition: IsSharedOrM4
     Value: !GetAtt TargetInstance.PublicIp
