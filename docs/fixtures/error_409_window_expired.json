@@ -1,0 +1,4 @@
+{
+  "error": "WINDOW_EXPIRED",
+  "message": "Attempt to confirm after TTL expired"
+}
