@@ -65,7 +65,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: lambda:InvokeFunction
-                Resource: !GetAtt RevertFunction.Arn
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:deadman-${Stage}-RevertFunction"
 
   HttpApi:
     Type: AWS::Serverless::HttpApi
@@ -109,13 +109,14 @@ Resources:
   ApplyFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub \"deadman-${Stage}-ApplyFunction"
       Handler: apply.app.handler
       Timeout: 15
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
           SCHEDULE_GROUP: !Ref SchedulerGroup
-          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          REVERT_FN_ARN: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:deadman-${Stage}-RevertFunction"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
           MANAGED_TAG_KEY: deadman:managed
           MANAGED_TAG_VALUE: "true"
@@ -169,12 +170,13 @@ Resources:
   ConfirmFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub \"deadman-${Stage}-ConfirmFunction"
       Handler: confirm.app.handler
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
           SCHEDULE_GROUP: !Ref SchedulerGroup
-          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          REVERT_FN_ARN: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:deadman-${Stage}-RevertFunction"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
           MANAGED_TAG_KEY: deadman:managed
           MANAGED_TAG_VALUE: "true"
@@ -207,13 +209,14 @@ Resources:
   RevertFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub \"deadman-${Stage}-RevertFunction"
       Handler: revert.app.handler
       Timeout: 25
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
           SCHEDULE_GROUP: !Ref SchedulerGroup
-          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          REVERT_FN_ARN: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:deadman-${Stage}-RevertFunction"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
           MANAGED_TAG_KEY: deadman:managed
           MANAGED_TAG_VALUE: "true"
@@ -256,12 +259,13 @@ Resources:
   StatusFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub \"deadman-${Stage}-StatusFunction"
       Handler: status.app.handler
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
           SCHEDULE_GROUP: !Ref SchedulerGroup
-          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          REVERT_FN_ARN: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:deadman-${Stage}-RevertFunction"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
           MANAGED_TAG_KEY: deadman:managed
           MANAGED_TAG_VALUE: "true"
