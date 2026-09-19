@@ -1,0 +1,3 @@
+- [ ] 1080p
+- [ ] Large terminal font
+- [ ] TTL = 30s

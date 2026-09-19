@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.0.0
 info:
   title: Deadman API
   version: 1.0.0
@@ -11,37 +11,19 @@ paths:
           description: Created
   /api/changes/{id}:
     get:
-      summary: Get change status
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
+      summary: Get status
       responses:
         '200':
           description: OK
   /api/changes/{id}/confirm:
     post:
       summary: Confirm a change
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
       responses:
         '200':
           description: OK
   /api/changes/{id}/revert:
     post:
-      summary: Revert a change
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
+      summary: Revert a change manually
       responses:
         '200':
           description: OK
