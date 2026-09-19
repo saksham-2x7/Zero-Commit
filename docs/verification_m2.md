@@ -19,8 +19,7 @@
 | Packaging: `from apply/confirm/revert/status.app import handler` from inside `src/` | PASS |
 | Third-party imports: none (stdlib + boto3/botocore only) | PASS |
 | ULID `change_id` generation: stdlib-only (`os.urandom` + Crockford Base32), 26 chars, unique | PASS |
-| Request shapes vs real AWS API models (botocore Stubber, `src/tests/test_request_shapes.py`, 5 tests) | PASS |
-| Unit suite (`python -m pytest src/tests -q`) | 49 passed |
+| Unit suite (`python -m pytest src/tests -q`) | 63 passed (including post-T0 crash-safety catch-all, SGLOCK release, error formatting, env fail-fast) |
 
 ## Live smoke test (deployed stack, PASS)
 
