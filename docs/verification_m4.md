@@ -40,14 +40,16 @@ Pass criteria (spec): no project does confirm-or-auto-revert on AWS resources. F
 **Source: web searches run by Claude in chat (GitHub and general web only; none reached Devpost). Not a manual search by M4, and not independently re-verified.**
 "No exact clone found on GitHub/web search. Closest: tf_aws_lambda_ip_whitelist, marekq/robothor aws-lambda-firewall, bushong1/lambda-revoke-sg, palmetto aws-security-group-add-ip-action (all expiring grants, polled cleanup), Securosis 2016 auto-revert of any SG change (no human confirm). Devpost NOT CHECKED, to be searched manually."
 
-Verdict: **PARTIAL, not PASS.** 1f becomes PASS only after M4 says the Devpost searches (queries 1 and 3) have been done by hand.
+Verdict: **PARTIAL, not PASS.** 1f becomes PASS only after M4 says the manual Devpost/GitHub searches for all five queries have been done.
 
-| # | Query | Status |
-|---|---|---|
-| 1 | Devpost `"commit confirmed" AWS security group` | NOT CHECKED |
-| 2 | GitHub `"dead man's switch" security group EventBridge Scheduler revert` | searched, no exact clone |
-| 3 | Devpost `auto-revert "security group" hackathon AWS` | NOT CHECKED |
-| 4 | GitHub `"one-time schedule" revoke_security_group_ingress rollback` | searched, no exact clone |
-| 5 | Google/Product Hunt `confirm or rollback AWS infrastructure change "EventBridge Scheduler"` | searched, no exact clone |
+**How the searches were run:** general web searches by Claude in chat, with strings reworded from the spec's 1f queries (spec text is in the "Spec query" column). None was scoped to Devpost, and no Devpost pages were returned. Even query 1, which starts with the word "Devpost", was a general web search.
 
-Per-query status is inferred from the summary above; queries 2, 4 and 5 are not confirmed as run verbatim. Correct this when Devpost is done.
+| # | Spec query | Exact string run (general web search) | Manual search by M4 still needed |
+|---|---|---|---|
+| 1 | Devpost `"commit confirmed" AWS security group` | `Devpost "commit confirmed" AWS security group` | YES: Devpost and GitHub |
+| 2 | GitHub `"dead man's switch" security group EventBridge Scheduler revert` | `"dead man's switch" security group EventBridge Scheduler revert AWS` | YES: Devpost and GitHub |
+| 3 | Devpost `auto-revert "security group" hackathon AWS` | `auto-revert security group change hackathon AWS lambda rollback timer confirm` | YES: Devpost and GitHub |
+| 4 | GitHub `"one-time schedule" revoke_security_group_ingress rollback` | `"one-time schedule" revoke_security_group_ingress rollback lambda scheduler temporary security group rule` | YES: Devpost and GitHub |
+| 5 | Google/Product Hunt `confirm or rollback AWS infrastructure change "EventBridge Scheduler"` | `confirm or rollback AWS infrastructure change "EventBridge Scheduler" auto rollback unless confirmed` | YES: Devpost and GitHub |
+
+All five spec queries, including the two Devpost ones (1 and 3), are still to be run manually by M4 on Devpost and GitHub. Results in the quoted summary above come from the general web searches only.
