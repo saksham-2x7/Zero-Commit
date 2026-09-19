@@ -40,3 +40,13 @@ button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+
+html.dark {
+  filter: invert(1) hue-rotate(180deg);
+  background-color: #111;
+}
+
+html.dark button {
+  /* Buttons keep their original semantics */
+}

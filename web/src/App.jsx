@@ -35,6 +35,16 @@ export default function App() {
 
   const [activeChange, setActiveChange] = useState(null);
   const [countdown, setCountdown] = useState(null);
+
+  const [darkMode, setDarkMode] = useState(false);
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
   
   useEffect(() => {
     fetch('/config.json')
@@ -175,7 +185,15 @@ export default function App() {
     <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
         <h1 style={{ margin: 0, fontSize: '2.5rem', fontWeight: '800', letterSpacing: '-1px' }}>Deadman</h1>
-        <div style={{ width: '300px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', width: '300px' }}>
+          <button 
+            type="button" 
+            onClick={() => setDarkMode(!darkMode)}
+            style={{ padding: '0.5rem', borderRadius: '50%', border: '1px solid #ccc', background: 'transparent', cursor: 'pointer', fontSize: '1.2rem' }}
+            title="Toggle Dark Mode"
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
           <input 
             type="password" 
             value={token} 
