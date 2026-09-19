@@ -10,7 +10,9 @@ export async function initApi() {
     const res = await fetch('/config.json');
     if (res.ok) {
       const config = await res.json();
-      apiBase = config.apiBase || '/api';
+      if (config.apiBase) {
+        apiBase = config.apiBase.trim().replace(/\/+$/, '');
+      }
     }
   } catch {
     apiBase = '/api';

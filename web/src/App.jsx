@@ -72,7 +72,7 @@ export default function App() {
     fetch('/config.json')
       .then(res => res.json())
       .then(data => {
-        if (data.apiBase) setApiBase(data.apiBase);
+        if (data.apiBase) setApiBase(data.apiBase.trim().replace(/\/+$/, ''));
       })
       .catch(() => setApiBase('/api'));
   }, []);
