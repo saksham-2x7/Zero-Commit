@@ -14,3 +14,6 @@
 
 ## Check 1g (CloudFront Auth)
 - **Result:** PENDING (Will verify in T5)
+
+## Check 1g (CloudFront Auth)
+- **Result:** PASS. Accessing the CloudFront URL with a valid Bearer token returns 200 OK. Requests without a token or with an invalid token return 401/403.
