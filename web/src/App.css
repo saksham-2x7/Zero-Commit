@@ -35,7 +35,7 @@
 
 /* ── Container ── */
 .app-container {
-  max-width: 880px;
+  max-width: 920px;
   margin: 0 auto;
   padding: 1.5rem 1rem 3rem;
 }
@@ -266,6 +266,7 @@
   padding: 0.15rem 0.45rem;
   border-radius: 4px;
   letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .badge-revoke {
@@ -397,15 +398,21 @@
   background: var(--surface-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 1.75rem;
+  padding: 2rem;
   margin-bottom: 1.75rem;
+}
+
+.countdown-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .countdown-ring-wrap {
   position: relative;
-  width: 150px;
-  height: 150px;
-  flex-shrink: 0;
+  width: 220px;
+  height: 220px;
 }
 
 .countdown-svg {
@@ -436,57 +443,66 @@
 }
 
 .countdown-value {
-  font-size: 2.75rem;
+  font-size: 4rem;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
 }
 
 .countdown-unit {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 1px;
-  margin-top: 0.2rem;
+  letter-spacing: 1.5px;
+  margin-top: 0.35rem;
 }
 
 .countdown-static {
-  width: 150px;
-  height: 150px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
   background: var(--surface-highlight);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
 }
 
 .static-icon {
-  font-size: 2.25rem;
+  font-size: 3.5rem;
   font-weight: 800;
 }
 
 .static-label {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.75px;
   margin-top: 0.25rem;
+}
+
+.countdown-subtext {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+  text-align: center;
 }
 
 .action-button-group {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 1rem;
   flex: 1;
 }
 
 .btn-confirm {
   background: var(--color-confirmed);
   color: #0b0f19;
-  font-size: 1.25rem;
+  font-size: 1.35rem;
   font-weight: 800;
-  padding: 1.1rem;
+  padding: 1.25rem;
   letter-spacing: 1px;
   border-radius: var(--radius);
   box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
@@ -499,14 +515,25 @@
   background: transparent;
   color: var(--danger);
   border: 2px solid var(--danger);
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 700;
-  padding: 0.85rem;
+  padding: 1rem;
   letter-spacing: 0.5px;
   border-radius: var(--radius);
 }
 .btn-revert:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.1);
+}
+
+/* Visibly Disabled States for ALL terminal states */
+.btn-confirm:disabled,
+.btn-revert:disabled {
+  background: var(--surface-highlight) !important;
+  color: var(--text-muted) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+  cursor: not-allowed !important;
+  opacity: 0.45 !important;
 }
 
 /* ── Status Grid: Timeline & Operations ── */
@@ -689,7 +716,7 @@
 }
 
 /* ── Responsive ── */
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .form-row-2col {
     grid-template-columns: 1fr;
   }

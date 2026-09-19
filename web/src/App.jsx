@@ -23,14 +23,13 @@ const ERROR_MAP = {
   'INTERNAL': 'An internal server error occurred.'
 };
 
-function formatOpLine(op) {
-  const action = op.action || 'REVOKE';
+function formatOpDetails(op) {
   const proto = op.protocol || 'tcp';
   const portStr = (op.from_port === op.to_port || op.to_port === undefined)
     ? `${op.from_port}`
     : `${op.from_port}–${op.to_port}`;
   const cidr = op.cidr || op.source || '0.0.0.0/0';
-  return `${action} ${proto} ${portStr} from ${cidr}`;
+  return `${proto} ${portStr} from ${cidr}`;
 }
 
 function friendlyError(data, status) {
@@ -39,7 +38,7 @@ function friendlyError(data, status) {
     return 'Unauthorized or forbidden: Invalid bearer token.';
   }
   if (!data) return 'Network error — check your connection.';
-  // If backend provided a specific helpful error message (e.g. min/max TTL limits), use it:
+  // If backend provided a specific helpful error message (e.g. min/max TTL limits), prioritize it:
   if (data.error?.message) return data.error.message;
   if (data.message) return data.message;
   const code = data.error?.code || data.error;
@@ -204,8 +203,8 @@ export default function App() {
     setForm(prev => ({ ...prev, ops: prev.ops.filter((_, i) => i !== index) }));
   };
 
-  // SVG ring calculations
-  const radius = 60;
+  // 1.5x larger SVG ring calculations
+  const radius = 90;
   const circumference = 2 * Math.PI * radius;
   const ttl = activeChange?.ttl_seconds || form.ttl_seconds || 90;
   const strokeDashoffset = countdown !== null
@@ -218,6 +217,7 @@ export default function App() {
     : 'var(--accent)';
 
   const currentStatus = activeChange?.status || '';
+  const isPending = currentStatus === 'PENDING';
 
   return (
     <div className="app-container">
@@ -233,6 +233,15 @@ export default function App() {
           <span className="token-icon">🔑</span>
           <input
             type="password"
+            name="deadman_api_token"
+            id="deadman_api_token"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            data-lpignore="true"
+            data-form-type="other"
+            data-1p-ignore="true"
             value={token}
             onChange={e => setToken(e.target.value)}
             placeholder="Bearer Token (Required)"
@@ -361,7 +370,7 @@ export default function App() {
                   <span className={`badge-op ${op.action === 'REVOKE' ? 'badge-revoke' : 'badge-authorize'}`}>
                     {op.action}
                   </span>
-                  <span className="delta-text">{formatOpLine(op)}</span>
+                  <span className="delta-text">{formatOpDetails(op)}</span>
                 </div>
               ))}
             </div>
@@ -412,49 +421,52 @@ export default function App() {
           )}
 
           <div className="action-center">
-            {countdown !== null ? (
-              <div className="countdown-ring-wrap">
-                <svg width="150" height="150" className="countdown-svg">
-                  <circle cx="75" cy="75" r={radius} className="ring-bg" strokeWidth="10" />
-                  <circle
-                    cx="75"
-                    cy="75"
-                    r={radius}
-                    className="ring-bar"
-                    stroke={ringColor}
-                    strokeWidth="10"
-                    strokeDasharray={circumference}
-                    strokeDashoffset={strokeDashoffset}
-                  />
-                </svg>
-                <div className="countdown-inner">
-                  <span className="countdown-value" style={{ color: ringColor }}>{countdown}</span>
-                  <span className="countdown-unit">SECONDS</span>
+            <div className="countdown-column">
+              {countdown !== null ? (
+                <div className="countdown-ring-wrap">
+                  <svg width="220" height="220" className="countdown-svg">
+                    <circle cx="110" cy="110" r={radius} className="ring-bg" strokeWidth="12" />
+                    <circle
+                      cx="110"
+                      cy="110"
+                      r={radius}
+                      className="ring-bar"
+                      stroke={ringColor}
+                      strokeWidth="12"
+                      strokeDasharray={circumference}
+                      strokeDashoffset={strokeDashoffset}
+                    />
+                  </svg>
+                  <div className="countdown-inner">
+                    <span className="countdown-value" style={{ color: ringColor }}>{countdown}</span>
+                    <span className="countdown-unit">SECONDS</span>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className={`countdown-static status-${currentStatus.toLowerCase()}`}>
-                <div className="static-icon">
-                  {currentStatus === 'CONFIRMED' ? '✓'
-                    : currentStatus === 'REVERTED' ? '↩'
-                    : currentStatus === 'REVERTING' ? '↻'
-                    : '✕'}
+              ) : (
+                <div className={`countdown-static status-${currentStatus.toLowerCase()}`}>
+                  <div className="static-icon">
+                    {currentStatus === 'CONFIRMED' ? '✓'
+                      : currentStatus === 'REVERTED' ? '↩'
+                      : currentStatus === 'REVERTING' ? '↻'
+                      : '✕'}
+                  </div>
+                  <div className="static-label">{currentStatus}</div>
                 </div>
-                <div className="static-label">{currentStatus}</div>
-              </div>
-            )}
+              )}
+              <div className="countdown-subtext">Auto-reverts unless confirmed</div>
+            </div>
 
             <div className="action-button-group">
               <button
                 onClick={() => handleAction('confirm')}
-                disabled={currentStatus !== 'PENDING' || loading}
+                disabled={!isPending || loading}
                 className="btn-confirm"
               >
                 {loading ? 'Processing…' : 'CONFIRM'}
               </button>
               <button
                 onClick={() => handleAction('revert')}
-                disabled={currentStatus !== 'PENDING' || loading}
+                disabled={!isPending || loading}
                 className="btn-revert"
               >
                 {loading ? 'Processing…' : 'REVERT NOW'}
@@ -514,8 +526,13 @@ export default function App() {
                       <div key={i} className="op-card-item">
                         <div className="op-card-left">
                           <span className="op-num">Op {r.op_id}</span>
+                          {matchingOp && (
+                            <span className={`badge-op ${matchingOp.action === 'REVOKE' ? 'badge-revoke' : 'badge-authorize'}`}>
+                              {matchingOp.action}
+                            </span>
+                          )}
                           <span className="op-readable-desc">
-                            {matchingOp ? formatOpLine(matchingOp) : `Rule operation ${r.op_id}`}
+                            {matchingOp ? formatOpDetails(matchingOp) : `Rule operation ${r.op_id}`}
                           </span>
                           {r.detail && <span className="op-detail">({r.detail})</span>}
                         </div>
@@ -532,7 +549,7 @@ export default function App() {
                         <span className={`badge-op ${op.action === 'REVOKE' ? 'badge-revoke' : 'badge-authorize'}`}>
                           {op.action}
                         </span>
-                        <span className="op-readable-desc">{formatOpLine(op)}</span>
+                        <span className="op-readable-desc">{formatOpDetails(op)}</span>
                       </div>
                       {op.applied !== undefined && op.applied !== null ? (
                         <span className={`op-badge-result ${op.applied ? 'result-reverted' : 'result-skipped'}`}>
