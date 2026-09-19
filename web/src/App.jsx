@@ -4,7 +4,7 @@ import './App.css';
 /* ── Spec §5 Error Code Translation ── */
 const ERROR_MAP = {
   'INVALID_REQUEST': 'The request was invalid. Please check your inputs.',
-  'TTL_OUT_OF_RANGE': 'The TTL (time-to-live) is out of the allowed range (30s – 600s).',
+  'TTL_OUT_OF_RANGE': 'The TTL (time-to-live) is out of the allowed range.',
   'UNSUPPORTED_RULE': 'Only IPv4 CIDR ingress rules are supported.',
   'UNAUTHORIZED': 'Missing or invalid bearer token.',
   'SG_NOT_MANAGED': 'The target Security Group is not managed by Deadman or belongs to another stage.',
@@ -39,10 +39,11 @@ function friendlyError(data, status) {
     return 'Unauthorized or forbidden: Invalid bearer token.';
   }
   if (!data) return 'Network error — check your connection.';
-  const code = data.error?.code || data.error;
-  if (code && ERROR_MAP[code]) return ERROR_MAP[code];
+  // If backend provided a specific helpful error message (e.g. min/max TTL limits), use it:
   if (data.error?.message) return data.error.message;
   if (data.message) return data.message;
+  const code = data.error?.code || data.error;
+  if (code && ERROR_MAP[code]) return ERROR_MAP[code];
   return 'Something went wrong.';
 }
 
@@ -273,8 +274,7 @@ export default function App() {
                 value={form.ttl_seconds}
                 onChange={e => setForm({ ...form, ttl_seconds: parseInt(e.target.value, 10) || 0 })}
                 required
-                min="30"
-                max="600"
+                min="1"
               />
             </div>
           </div>
