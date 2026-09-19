@@ -127,6 +127,7 @@ Resources:
               Action:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
               Resource: !GetAtt DeadmanTable.Arn
             - Effect: Allow
               Action:
@@ -157,6 +158,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
               Resource: !GetAtt DeadmanTable.Arn
             - Effect: Allow
               Action:
@@ -188,6 +190,7 @@ Resources:
               Action:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
               Resource: !GetAtt DeadmanTable.Arn
       Events:
         ApiEvent:
