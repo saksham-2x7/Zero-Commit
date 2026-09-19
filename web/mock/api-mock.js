@@ -1,133 +1,142 @@
+/**
+ * Mock API layer for Deadman.
+ * When VITE_MOCK=1, main.jsx calls setupMock() which monkey-patches
+ * window.fetch so that /api/* requests hit this in-memory backend.
+ * The real fetch is preserved for non-API calls (like /config.json).
+ */
+
 export function setupMock() {
-  let state = {
-    status: null, // PENDING, CONFIRMED, REVERTING, REVERTED, PARTIAL_REVERT, FAILED
-    change: null
-  };
+  const _realFetch = window.fetch.bind(window);
 
-  const generateChangeId = () => '01J' + Math.random().toString(36).substr(2, 9);
-  
-  const getServerTime = () => Math.floor(Date.now() / 1000);
+  let state = { change: null };
+  let revertTimer = null;
 
-  window.fetch = async (url, options) => {
-    const isApi = url.startsWith('/api/changes');
-    if (!isApi) {
-      console.warn('Unhandled mock request', url);
-      return new Response('Not Found', { status: 404 });
+  const now = () => Math.floor(Date.now() / 1000);
+  const uid = () => 'chg_' + Math.random().toString(36).substring(2, 10);
+
+  const json = (body, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  window.fetch = async (url, opts = {}) => {
+    // Pass through non-API requests to real fetch
+    if (typeof url === 'string' && !url.includes('/api/')) {
+      return _realFetch(url, opts);
     }
 
-    const auth = options.headers?.Authorization;
-    if (!auth || !auth.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({
-        error: { code: 'UNAUTHORIZED', message: 'Missing or bad token' }
-      }), { status: 401 });
-    }
-    
-    // Artificial delay
-    await new Promise(r => setTimeout(r, 500));
+    const path = typeof url === 'string' ? url : url.toString();
+    const method = (opts.method || 'GET').toUpperCase();
 
-    // POST /api/changes
-    if (url === '/api/changes' && options.method === 'POST') {
-      const body = JSON.parse(options.body);
-      const server_time = getServerTime();
+    // Auth check
+    const auth = opts.headers?.Authorization || opts.headers?.authorization || '';
+    if (!auth.startsWith('Bearer ') || auth.length < 10) {
+      return json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid token' } }, 401);
+    }
+
+    // Artificial latency
+    await new Promise(r => setTimeout(r, 300));
+
+    // ── POST /api/changes ──
+    if (path.endsWith('/api/changes') && method === 'POST') {
+      const body = JSON.parse(opts.body);
+
+      if (!body.sg_id) return json({ error: { code: 'INVALID_REQUEST', message: 'sg_id is required' } }, 400);
+      if (!body.sg_id.startsWith('sg-')) return json({ error: { code: 'SG_NOT_FOUND', message: 'SG not found' } }, 404);
+      if (body.ttl_seconds < 30) return json({ error: { code: 'TTL_OUT_OF_RANGE', message: 'TTL too low (min 30)' } }, 400);
+      if (body.ttl_seconds > 600) return json({ error: { code: 'TTL_OUT_OF_RANGE', message: 'TTL too high (max 600)' } }, 400);
+      if (!body.ops || body.ops.length < 1 || body.ops.length > 5) return json({ error: { code: 'INVALID_REQUEST', message: '1-5 ops required' } }, 400);
+
+      if (state.change && state.change.status === 'PENDING') {
+        return json({ error: { code: 'SG_BUSY', message: 'Another change is active' } }, 409);
+      }
+
+      const server_time = now();
       state.change = {
-        change_id: generateChangeId(),
+        change_id: uid(),
         status: 'PENDING',
         sg_id: body.sg_id,
         ttl_seconds: body.ttl_seconds,
         created_at: server_time,
         expires_at: server_time + body.ttl_seconds,
-        server_time: server_time,
-        schedule_name: 'dm-mock',
-        delta: body.ops.map((o, i) => ({ op_id: i+1, ...o, applied: null }))
+        server_time,
+        schedule_name: 'dm-mock-' + Date.now(),
+        delta: body.ops.map((o, i) => ({ op_id: i + 1, ...o, applied: true })),
       };
-      state.status = 'PENDING';
-      
-      // Auto-revert mock (Scheduler)
-      setTimeout(() => {
-        if (state.status === 'PENDING') {
-          state.status = 'REVERTED';
+
+      // Auto-revert after TTL
+      if (revertTimer) clearTimeout(revertTimer);
+      revertTimer = setTimeout(() => {
+        if (state.change && state.change.status === 'PENDING') {
           state.change.status = 'REVERTED';
-          state.change.reverted_at = getServerTime();
+          state.change.reverted_at = now();
           state.change.revert_trigger = 'SCHEDULE';
-          state.change.revert_report = state.change.delta.map(op => ({ op_id: op.op_id, result: 'REVERTED', detail: '' }));
+          state.change.revert_report = state.change.delta.map(op => ({
+            op_id: op.op_id, result: 'REVERTED', detail: '',
+          }));
         }
       }, body.ttl_seconds * 1000);
 
-      return new Response(JSON.stringify(state.change), { status: 201 });
+      return json(state.change, 201);
     }
 
-    // POST /api/changes/{id}/confirm
-    const confirmMatch = url.match(/^\/api\/changes\/([^/]+)\/confirm$/);
-    if (confirmMatch && options.method === 'POST') {
+    // ── GET /api/changes/{id} ──
+    const getMatch = path.match(/\/api\/changes\/([^/]+)$/);
+    if (getMatch && method === 'GET') {
+      if (!state.change || state.change.change_id !== getMatch[1]) {
+        return json({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }, 404);
+      }
+      return json({ ...state.change, server_time: now() });
+    }
+
+    // ── POST /api/changes/{id}/confirm ──
+    const confirmMatch = path.match(/\/api\/changes\/([^/]+)\/confirm$/);
+    if (confirmMatch && method === 'POST') {
       const id = confirmMatch[1];
       if (!state.change || state.change.change_id !== id) {
-        return new Response(JSON.stringify({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }), { status: 404 });
+        return json({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }, 404);
       }
-      if (state.status !== 'PENDING') {
-        if (state.status === 'CONFIRMED') {
-          return new Response(JSON.stringify({ change_id: id, status: 'CONFIRMED', confirmed_at: state.change.confirmed_at, idempotent: true }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: { code: 'CHANGE_NOT_PENDING', message: 'Not pending', status: state.status } }), { status: 409 });
+      if (state.change.status === 'CONFIRMED') {
+        return json({ change_id: id, status: 'CONFIRMED', confirmed_at: state.change.confirmed_at, idempotent: true });
       }
-      
-      if (getServerTime() >= state.change.expires_at) {
-        return new Response(JSON.stringify({ error: { code: 'WINDOW_EXPIRED', message: 'Late confirm' } }), { status: 409 });
+      if (state.change.status !== 'PENDING') {
+        return json({ error: { code: 'CHANGE_NOT_PENDING', message: 'Not pending' } }, 409);
+      }
+      if (now() >= state.change.expires_at) {
+        return json({ error: { code: 'WINDOW_EXPIRED', message: 'TTL expired' } }, 409);
       }
 
-      state.status = 'CONFIRMED';
       state.change.status = 'CONFIRMED';
-      state.change.confirmed_at = getServerTime();
-      return new Response(JSON.stringify({
-        change_id: id,
-        status: 'CONFIRMED',
-        confirmed_at: state.change.confirmed_at,
-        idempotent: false
-      }), { status: 200 });
+      state.change.confirmed_at = now();
+      if (revertTimer) { clearTimeout(revertTimer); revertTimer = null; }
+      return json({ change_id: id, status: 'CONFIRMED', confirmed_at: state.change.confirmed_at });
     }
 
-    // POST /api/changes/{id}/revert
-    const revertMatch = url.match(/^\/api\/changes\/([^/]+)\/revert$/);
-    if (revertMatch && options.method === 'POST') {
+    // ── POST /api/changes/{id}/revert ──
+    const revertMatch = path.match(/\/api\/changes\/([^/]+)\/revert$/);
+    if (revertMatch && method === 'POST') {
       const id = revertMatch[1];
       if (!state.change || state.change.change_id !== id) {
-        return new Response(JSON.stringify({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }), { status: 404 });
+        return json({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }, 404);
       }
-      if (state.status !== 'PENDING') {
-         if (state.status === 'REVERTED') {
-           return new Response(JSON.stringify({ change_id: id, status: 'REVERTED', revert_trigger: 'MANUAL', reverted_at: state.change.reverted_at, idempotent: true, revert_report: state.change.revert_report }), { status: 200 });
-         }
-         return new Response(JSON.stringify({ error: { code: 'CHANGE_NOT_PENDING', message: 'Not pending' } }), { status: 409 });
+      if (state.change.status === 'REVERTED') {
+        return json({ change_id: id, status: 'REVERTED', revert_trigger: 'MANUAL', reverted_at: state.change.reverted_at, revert_report: state.change.revert_report });
       }
-      
-      state.status = 'REVERTED';
+      if (state.change.status !== 'PENDING') {
+        return json({ error: { code: 'CHANGE_NOT_PENDING', message: 'Not pending' } }, 409);
+      }
+
       state.change.status = 'REVERTED';
-      state.change.reverted_at = getServerTime();
+      state.change.reverted_at = now();
       state.change.revert_trigger = 'MANUAL';
-      state.change.revert_report = state.change.delta.map(op => ({ op_id: op.op_id, result: 'REVERTED', detail: '' }));
-
-      return new Response(JSON.stringify({
-        change_id: id,
-        status: 'REVERTED',
-        revert_trigger: 'MANUAL',
-        reverted_at: state.change.reverted_at,
-        idempotent: false,
-        revert_report: state.change.revert_report
-      }), { status: 200 });
+      state.change.revert_report = state.change.delta.map(op => ({
+        op_id: op.op_id, result: 'REVERTED', detail: '',
+      }));
+      if (revertTimer) { clearTimeout(revertTimer); revertTimer = null; }
+      return json({ change_id: id, status: 'REVERTED', revert_trigger: 'MANUAL', reverted_at: state.change.reverted_at, revert_report: state.change.revert_report });
     }
 
-    // GET /api/changes/{id}
-    const getMatch = url.match(/^\/api\/changes\/([^/]+)$/);
-    if (getMatch && options.method === 'GET') {
-      const id = getMatch[1];
-      if (!state.change || state.change.change_id !== id) {
-        return new Response(JSON.stringify({ error: { code: 'CHANGE_NOT_FOUND', message: 'Not found' } }), { status: 404 });
-      }
-      
-      // Update server_time dynamically
-      const resp = { ...state.change, server_time: getServerTime() };
-      return new Response(JSON.stringify(resp), { status: 200 });
-    }
-
-    return new Response('Not Found', { status: 404 });
+    return json({ error: { code: 'INTERNAL', message: 'Unknown route' } }, 500);
   };
 }
