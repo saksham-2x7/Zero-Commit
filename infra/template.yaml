@@ -87,6 +87,14 @@ Resources:
             AuthorizerPayloadFormatVersion: '2.0'
             EnableSimpleResponses: true
 
+  AuthorizerFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AuthorizerFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*"
+
   AuthorizerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -112,11 +120,13 @@ Resources:
             - Effect: Allow
               Action:
                 - ec2:DescribeSecurityGroupRules
+                - ec2:DescribeSecurityGroups
                 - ec2:RevokeSecurityGroupIngress
               Resource: "*"
             - Effect: Allow
               Action:
                 - dynamodb:PutItem
+                - dynamodb:UpdateItem
               Resource: !GetAtt DeadmanTable.Arn
             - Effect: Allow
               Action:
@@ -228,7 +238,7 @@ Resources:
     Condition: IsSharedOrM4
     Properties:
       ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
-      InstanceType: t3.nano
+      InstanceType: t3.micro
       SecurityGroupIds:
         - !Ref TargetSecurityGroup
       UserData:
@@ -239,13 +249,6 @@ Resources:
           systemctl enable httpd
           echo "<h1>Hello from Deadman $(hostname)</h1>" > /var/www/html/index.html
 
-Outputs:
-  ApiUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
-  TableName:
-    Value: !Ref DeadmanTable
-  TargetSgId:
-    Value: !Ref TargetSecurityGroup
 
   FrontendBucket:
     Type: AWS::S3::Bucket
@@ -306,8 +309,25 @@ Outputs:
           - PathPattern: "/api/*"
             TargetOriginId: ApiOrigin
             ViewerProtocolPolicy: https-only
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
             CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-            OriginRequestPolicyId: "b689b0a8-53d0-40ab-b3f3-19eb31f28b4a"
+            OriginRequestPolicyId: "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+
+Outputs:
+
+  ApiUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  TableName:
+    Value: !Ref DeadmanTable
+  TargetSgId:
+    Value: !Ref TargetSecurityGroup
   TargetInstancePublicIp:
     Condition: IsSharedOrM4
     Value: !GetAtt TargetInstance.PublicIp
@@ -317,3 +337,4 @@ Outputs:
   FrontendBucketOut:
     Condition: IsShared
     Value: !Ref FrontendBucket
+

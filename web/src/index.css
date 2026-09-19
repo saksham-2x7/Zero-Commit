@@ -66,3 +66,8 @@ button:disabled {
   background: #334155;
   border-radius: 4px;
 }
+html, body, #root {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
