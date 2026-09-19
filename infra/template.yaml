@@ -114,20 +114,36 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
+          SCHEDULE_GROUP: !Ref SchedulerGroup
+          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
-          REVERT_LAMBDA_ARN: !GetAtt RevertFunction.Arn
+          MANAGED_TAG_KEY: deadman:managed
+          MANAGED_TAG_VALUE: "true"
+          STAGE_TAG_KEY: deadman:stage
           STAGE: !Ref Stage
-          SCHEDULER_GROUP: !Ref SchedulerGroup
+          MIN_TTL_SECONDS: "60"
+          MAX_TTL_SECONDS: "600"
+          APPLY_LEASE_SECONDS: "20"
+          REVERT_LEASE_SECONDS: "60"
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - ec2:DescribeSecurityGroupRules
                 - ec2:DescribeSecurityGroups
-                - ec2:RevokeSecurityGroupIngress
               Resource: "*"
             - Effect: Allow
               Action:
+                - ec2:RevokeSecurityGroupIngress
+                - ec2:AuthorizeSecurityGroupIngress
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/deadman:managed: "true"
+                  aws:ResourceTag/deadman:stage: !Ref Stage
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
@@ -135,6 +151,8 @@ Resources:
             - Effect: Allow
               Action:
                 - scheduler:CreateSchedule
+                - scheduler:GetSchedule
+                - scheduler:DeleteSchedule
               Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/deadman-${Stage}/*"
             - Effect: Allow
               Action:
@@ -155,11 +173,22 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
-          SCHEDULER_GROUP: !Ref SchedulerGroup
+          SCHEDULE_GROUP: !Ref SchedulerGroup
+          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
+          MANAGED_TAG_KEY: deadman:managed
+          MANAGED_TAG_VALUE: "true"
+          STAGE_TAG_KEY: deadman:stage
+          STAGE: !Ref Stage
+          MIN_TTL_SECONDS: "60"
+          MAX_TTL_SECONDS: "600"
+          APPLY_LEASE_SECONDS: "20"
+          REVERT_LEASE_SECONDS: "60"
       Policies:
         - Statement:
             - Effect: Allow
               Action:
+                - dynamodb:GetItem
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
               Resource: !GetAtt DeadmanTable.Arn
@@ -183,12 +212,33 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
+          SCHEDULE_GROUP: !Ref SchedulerGroup
+          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
+          MANAGED_TAG_KEY: deadman:managed
+          MANAGED_TAG_VALUE: "true"
+          STAGE_TAG_KEY: deadman:stage
+          STAGE: !Ref Stage
+          MIN_TTL_SECONDS: "60"
+          MAX_TTL_SECONDS: "600"
+          APPLY_LEASE_SECONDS: "20"
+          REVERT_LEASE_SECONDS: "60"
       Policies:
         - Statement:
             - Effect: Allow
               Action:
+                - ec2:DescribeSecurityGroupRules
+                - ec2:DescribeSecurityGroups
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ec2:RevokeSecurityGroupIngress
                 - ec2:AuthorizeSecurityGroupIngress
               Resource: "*"
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/deadman:managed: "true"
+                  aws:ResourceTag/deadman:stage: !Ref Stage
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -210,6 +260,17 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DeadmanTable
+          SCHEDULE_GROUP: !Ref SchedulerGroup
+          REVERT_FN_ARN: !GetAtt RevertFunction.Arn
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
+          MANAGED_TAG_KEY: deadman:managed
+          MANAGED_TAG_VALUE: "true"
+          STAGE_TAG_KEY: deadman:stage
+          STAGE: !Ref Stage
+          MIN_TTL_SECONDS: "60"
+          MAX_TTL_SECONDS: "600"
+          APPLY_LEASE_SECONDS: "20"
+          REVERT_LEASE_SECONDS: "60"
       Policies:
         - Statement:
             - Effect: Allow
