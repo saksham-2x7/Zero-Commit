@@ -1,52 +1,68 @@
-body {
+/* ── Dark Theme Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: #f0f2f5;
-  color: #333;
+  padding: 0;
 }
 
-h1, h2, h3, h4 {
-  color: #111;
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  background-color: #0b0f19;
+  color: #f8fafc;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input, select, button, textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
 }
 
 input, select {
-  font-family: inherit;
-  font-size: 1rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  transition: border-color 0.2s;
+  background-color: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 input:focus, select:focus {
   outline: none;
-  border-color: #0066cc;
-  box-shadow: 0 0 0 2px rgba(0,102,204,0.2);
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
 }
 
 button {
-  font-family: inherit;
-  transition: opacity 0.2s, transform 0.1s;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 
-button:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-button:active:not(:disabled) {
-  transform: scale(0.98);
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-
-html.dark {
-  filter: invert(1) hue-rotate(180deg);
-  background-color: #111;
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-html.dark button {
-  /* Buttons keep their original semantics */
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
 }

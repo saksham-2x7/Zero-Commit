@@ -1,4 +1,7 @@
-import { mockFetch } from '../mock/api-mock.js';
+/**
+ * API client for Deadman.
+ * Relative to apiBase loaded from web/config.json (defaults to '/api').
+ */
 
 let apiBase = '/api';
 
@@ -9,8 +12,8 @@ export async function initApi() {
       const config = await res.json();
       apiBase = config.apiBase || '/api';
     }
-  } catch (e) {
-    console.warn('Failed to load config.json, using default apiBase');
+  } catch {
+    apiBase = '/api';
   }
 }
 
@@ -18,19 +21,23 @@ async function doFetch(path, options = {}) {
   const isMock = import.meta.env.VITE_MOCK === '1';
   let response;
   if (isMock) {
-    console.log('[MOCK]', options.method || 'GET', path, options);
-    response = await mockFetch(apiBase + path, options);
+    const { mockFetch } = await import('../mock/api-mock.js');
+    if (typeof mockFetch === 'function') {
+      response = await mockFetch(apiBase + path, options);
+    } else {
+      response = await fetch(apiBase + path, options);
+    }
   } else {
     response = await fetch(apiBase + path, options);
   }
   
   const data = await response.json().catch(() => ({}));
-  if (!response.status || response.status >= 400) {
-     const error = new Error(data.message || 'API Error');
-     error.code = data.error || data.message;
-     error.status = response.status || data._status;
-     error.data = data;
-     throw error;
+  if (!response.ok) {
+    const error = new Error(data.error?.message || data.message || 'API Error');
+    error.code = data.error?.code || data.error || 'UNKNOWN_ERROR';
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
   return data;
 }

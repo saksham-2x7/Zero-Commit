@@ -33,7 +33,11 @@ function formatOpLine(op) {
   return `${action} ${proto} ${portStr} from ${cidr}`;
 }
 
-function friendlyError(data) {
+function friendlyError(data, status) {
+  if (status === 401) return 'Missing or invalid bearer token.';
+  if (status === 403 && (!data?.error?.code || data?.error?.code === 'UNAUTHORIZED')) {
+    return 'Unauthorized or forbidden: Invalid bearer token.';
+  }
   if (!data) return 'Network error — check your connection.';
   const code = data.error?.code || data.error;
   if (code && ERROR_MAP[code]) return ERROR_MAP[code];
@@ -145,7 +149,7 @@ export default function App() {
           setCountdown(remaining > 0 ? remaining : 0);
         }
       } else {
-        setError(friendlyError(data) || `HTTP Error: ${res.status}`);
+        setError(friendlyError(data, res.status) || `HTTP Error: ${res.status}`);
       }
     } catch {
       setError('Network error — unable to reach API');
@@ -172,7 +176,7 @@ export default function App() {
         setActiveChange(prev => ({ ...prev, ...data }));
         setCountdown(null);
       } else {
-        setError(friendlyError(data) || `HTTP Error: ${res.status}`);
+        setError(friendlyError(data, res.status) || `HTTP Error: ${res.status}`);
       }
     } catch {
       setError('Network error — unable to reach API');
