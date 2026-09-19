@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Deadman - Transactional AWS security-group changes
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedPattern: ^(shared|m[1-4])$
+    Default: shared
+  AuthToken:
+    Type: String
+    NoEcho: true
+  MinTtlSeconds:
+    Type: Number
+    Default: 30
+
+Conditions:
+  IsShared: !Equals [!Ref Stage, "shared"]
+  IsSharedOrM4: !Or
+    - !Equals [!Ref Stage, "shared"]
+    - !Equals [!Ref Stage, "m4"]
+
+Globals:
+  Function:
+    Runtime: python3.11
+    CodeUri: ../src/
+
+Resources:
+  DeadmanTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: purge_at
+        Enabled: true
+
+  SchedulerGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub "deadman-${Stage}"
+
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: InvokeRevert
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt RevertFunction.Arn
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+      Auth:
+        DefaultAuthorizer: LambdaAuthorizer
+        Authorizers:
+          LambdaAuthorizer:
+            FunctionArn: !GetAtt AuthorizerFunction.Arn
+            AuthorizerPayloadFormatVersion: '2.0'
+            EnableSimpleResponses: true
+
+  AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: authorizer.app.handler
+      Environment:
+        Variables:
+          AUTH_TOKEN: !Ref AuthToken
+
+  ApplyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: apply.app.handler
+      Timeout: 15
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DeadmanTable
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
+          REVERT_LAMBDA_ARN: !GetAtt RevertFunction.Arn
+          STAGE: !Ref Stage
+          SCHEDULER_GROUP: !Ref SchedulerGroup
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeSecurityGroupRules
+                - ec2:RevokeSecurityGroupIngress
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt DeadmanTable.Arn
+            - Effect: Allow
+              Action:
+                - scheduler:CreateSchedule
+              Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/deadman-${Stage}/*"
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource: !GetAtt SchedulerExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/changes
+            Method: POST
+
+  ConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: confirm.app.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DeadmanTable
+          SCHEDULER_GROUP: !Ref SchedulerGroup
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource: !GetAtt DeadmanTable.Arn
+            - Effect: Allow
+              Action:
+                - scheduler:DeleteSchedule
+              Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/deadman-${Stage}/*"
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/changes/{id}/confirm
+            Method: POST
+
+  RevertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: revert.app.handler
+      Timeout: 25
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DeadmanTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:AuthorizeSecurityGroupIngress
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt DeadmanTable.Arn
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/changes/{id}/revert
+            Method: POST
+
+  StatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: status.app.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DeadmanTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt DeadmanTable.Arn
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/changes/{id}
+            Method: GET
+
+  TargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Deadman Target SG"
+      Tags:
+        - Key: deadman:managed
+          Value: "true"
+        - Key: deadman:stage
+          Value: !Ref Stage
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  TargetInstance:
+    Type: AWS::EC2::Instance
+    Condition: IsSharedOrM4
+    Properties:
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.nano
+      SecurityGroupIds:
+        - !Ref TargetSecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Hello from Deadman $(hostname)</h1>" > /var/www/html/index.html
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  TableName:
+    Value: !Ref DeadmanTable
+  TargetSgId:
+    Value: !Ref TargetSecurityGroup
