@@ -126,6 +126,7 @@ Resources:
           APPLY_LEASE_SECONDS: "20"
           REVERT_LEASE_SECONDS: "60"
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -185,6 +186,7 @@ Resources:
           APPLY_LEASE_SECONDS: "20"
           REVERT_LEASE_SECONDS: "60"
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -218,6 +220,7 @@ Resources:
                 - iam:PassRole
               Resource: !GetAtt SchedulerExecutionRole.Arn
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -257,6 +260,7 @@ Resources:
           APPLY_LEASE_SECONDS: "20"
           REVERT_LEASE_SECONDS: "60"
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -290,6 +294,7 @@ Resources:
                 - iam:PassRole
               Resource: !GetAtt SchedulerExecutionRole.Arn
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -338,6 +343,7 @@ Resources:
           APPLY_LEASE_SECONDS: "20"
           REVERT_LEASE_SECONDS: "60"
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
