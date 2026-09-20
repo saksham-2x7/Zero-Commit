@@ -164,8 +164,7 @@ def release_sg_lock(ddb_client: Any, table_name: str, sg_id: str, change_id: Opt
             "Key": {"pk": {"S": lock_pk}},
         }
         if change_id:
-            kwargs["ConditionExpression"] = "#cid = :cid"
-            kwargs["ExpressionAttributeNames"] = {"#cid": "active_change_id"}
+            kwargs["ConditionExpression"] = "active_change_id = :cid"
             kwargs["ExpressionAttributeValues"] = {":cid": {"S": change_id}}
         ddb_client.delete_item(**kwargs)
         logger.info("release_sg_lock successfully released lock for SG %s (change_id=%s)", sg_id, change_id)
