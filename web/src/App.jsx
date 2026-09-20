@@ -38,7 +38,6 @@ function friendlyError(data, status) {
     return 'Unauthorized or forbidden: Invalid bearer token.';
   }
   if (!data) return 'Network error — check your connection.';
-  // If backend provided a specific helpful error message (e.g. min/max TTL limits), prioritize it:
   if (data.error?.message) return data.error.message;
   if (data.message) return data.message;
   const code = data.error?.code || data.error;
@@ -49,6 +48,38 @@ function friendlyError(data, status) {
 function formatTime(epoch) {
   if (!epoch) return '—';
   return new Date(epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function generatePlainSummary(ops, ttl) {
+  if (!ops || ops.length === 0) return '';
+  const describeOp = (op) => {
+    const actionWord = op.action === 'REVOKE' ? 'closed to' : 'opened to';
+    const portWord = (op.from_port === op.to_port || op.to_port === undefined)
+      ? `Port ${op.from_port}`
+      : `Ports ${op.from_port}–${op.to_port}`;
+    const targetWord = (op.cidr || '').trim() === '0.0.0.0/0' ? 'everyone' : (op.cidr || '0.0.0.0/0');
+    return `${portWord} will be ${actionWord} ${targetWord}`;
+  };
+  if (ops.length === 1) {
+    return `${describeOp(ops[0])} for ${ttl} s unless you confirm.`;
+  }
+  if (ops.length === 2) {
+    return `${describeOp(ops[0])} and ${describeOp(ops[1]).toLowerCase()} for ${ttl} s unless you confirm.`;
+  }
+  return `${ops.length} security group rules will be modified for ${ttl} s unless you confirm.`;
+}
+
+function checkDangerousRevoke(ops) {
+  if (!ops || !Array.isArray(ops)) return false;
+  return ops.some(op => {
+    if (op.action !== 'REVOKE') return false;
+    if ((op.protocol || '').toLowerCase() !== 'tcp') return false;
+    const cidr = (op.cidr || '').trim();
+    if (cidr !== '0.0.0.0/0') return false;
+    const from = parseInt(op.from_port, 10);
+    const to = parseInt(op.to_port, 10);
+    return [22, 80, 443].some(p => p >= from && p <= to);
+  });
 }
 
 export default function App() {
@@ -203,8 +234,22 @@ export default function App() {
     setForm(prev => ({ ...prev, ops: prev.ops.filter((_, i) => i !== index) }));
   };
 
-  // 1.5x larger SVG ring calculations
-  const radius = 90;
+  const applyPreset = (presetKey) => {
+    if (presetKey === 'close-80') {
+      setForm(prev => ({
+        ...prev,
+        ops: [{ action: 'REVOKE', protocol: 'tcp', from_port: 80, to_port: 80, cidr: '0.0.0.0/0' }]
+      }));
+    } else if (presetKey === 'open-8081') {
+      setForm(prev => ({
+        ...prev,
+        ops: [{ action: 'AUTHORIZE', protocol: 'tcp', from_port: 8081, to_port: 8081, cidr: '10.0.0.0/8' }]
+      }));
+    }
+  };
+
+  // Larger SVG ring calculations (radius 100, svg 250x250)
+  const radius = 100;
   const circumference = 2 * Math.PI * radius;
   const ttl = activeChange?.ttl_seconds || form.ttl_seconds || 90;
   const strokeDashoffset = countdown !== null
@@ -218,19 +263,27 @@ export default function App() {
 
   const currentStatus = activeChange?.status || '';
   const isPending = currentStatus === 'PENDING';
+  const isTerminal = Boolean(
+    currentStatus &&
+    currentStatus !== 'PENDING' &&
+    currentStatus !== 'REVERTING'
+  );
+
+  const hasDangerousRevoke = checkDangerousRevoke(form.ops);
+  const plainSummary = generatePlainSummary(form.ops, form.ttl_seconds);
 
   return (
     <div className="app-container">
       <header className="app-header">
         <div className="logo-group">
-          <span className="logo-icon">🛡️</span>
+          <span className="logo-icon" aria-hidden="true">🛡️</span>
           <div>
             <h1 className="logo-title">Deadman</h1>
             <span className="logo-subtitle">Commit-Confirmed Security Groups</span>
           </div>
         </div>
         <div className="token-wrapper">
-          <span className="token-icon">🔑</span>
+          <span className="token-icon" aria-hidden="true">🔑</span>
           <input
             type="password"
             name="deadman_api_token"
@@ -253,7 +306,7 @@ export default function App() {
 
       {error && (
         <div role="alert" className="alert-banner alert-danger">
-          <span className="alert-icon">⛔</span>
+          <span className="alert-icon" aria-hidden="true">⛔</span>
           <div className="alert-text">{error}</div>
           <button className="alert-close" onClick={() => setError('')} aria-label="Dismiss error">×</button>
         </div>
@@ -261,7 +314,39 @@ export default function App() {
 
       {!activeChange ? (
         <form onSubmit={submitChange} className="card form-card">
-          <h2 className="card-title">Draft Security Group Change</h2>
+          <div className="form-header-row">
+            <div>
+              <h2 className="card-title">Draft Security Group Change</h2>
+              <p className="card-subtitle">
+                Changes will automatically revert after the timeout unless confirmed by an operator.
+              </p>
+            </div>
+          </div>
+
+          {/* Quick-action presets (prefill form only, never submit) */}
+          <div className="presets-box">
+            <div className="presets-label">Quick Presets (prefill only):</div>
+            <div className="presets-btn-group">
+              <button
+                type="button"
+                className="btn-preset"
+                onClick={() => applyPreset('close-80')}
+                title="Prefill with REVOKE tcp 80-80 0.0.0.0/0"
+              >
+                <span className="preset-pill preset-revoke">REVOKE</span>
+                <span>Close port 80 (0.0.0.0/0)</span>
+              </button>
+              <button
+                type="button"
+                className="btn-preset"
+                onClick={() => applyPreset('open-8081')}
+                title="Prefill with AUTHORIZE tcp 8081-8081 10.0.0.0/8"
+              >
+                <span className="preset-pill preset-authorize">AUTHORIZE</span>
+                <span>Open port 8081 (10.0.0.0/8)</span>
+              </button>
+            </div>
+          </div>
 
           <div className="form-row-2col">
             <div className="form-field">
@@ -273,6 +358,7 @@ export default function App() {
                 onChange={e => setForm({ ...form, sg_id: e.target.value })}
                 required
                 placeholder="sg-0123456789abcdef0"
+                className="form-input"
               />
             </div>
             <div className="form-field">
@@ -284,6 +370,7 @@ export default function App() {
                 onChange={e => setForm({ ...form, ttl_seconds: parseInt(e.target.value, 10) || 0 })}
                 required
                 min="1"
+                className="form-input"
               />
             </div>
           </div>
@@ -328,7 +415,7 @@ export default function App() {
                   required
                   aria-label="From port"
                 />
-                <span className="rule-separator">–</span>
+                <span className="rule-separator" aria-hidden="true">–</span>
                 <input
                   type="number"
                   value={op.to_port}
@@ -376,6 +463,24 @@ export default function App() {
             </div>
           </div>
 
+          {/* Calm warning when critical port access may be severed */}
+          {hasDangerousRevoke && (
+            <div className="calm-warning-box" role="status">
+              <span className="calm-warning-icon" aria-hidden="true">⚠️</span>
+              <div className="calm-warning-content">
+                <strong>Access warning:</strong> This may cut off access. Deadman will undo it after the timer unless you confirm.
+              </div>
+            </div>
+          )}
+
+          {/* Plain-language summary above Apply button */}
+          {plainSummary && (
+            <div className="plain-summary-box">
+              <span className="summary-icon" aria-hidden="true">ℹ️</span>
+              <span className="summary-text">{plainSummary}</span>
+            </div>
+          )}
+
           <button type="submit" disabled={loading} className="btn-primary btn-block">
             {loading ? 'Applying Change…' : 'Apply Change'}
           </button>
@@ -406,7 +511,7 @@ export default function App() {
 
           {(currentStatus === 'PARTIAL_REVERT' || currentStatus === 'FAILED') && (
             <div role="alert" className="alert-banner alert-critical">
-              <span className="alert-icon">⚠️</span>
+              <span className="alert-icon" aria-hidden="true">⚠️</span>
               <div>
                 <strong>
                   {currentStatus === 'FAILED'
@@ -420,26 +525,84 @@ export default function App() {
             </div>
           )}
 
+          {/* Result summary card when change reaches a terminal state */}
+          {isTerminal && (
+            <div className={`result-summary-card result-summary-${currentStatus.toLowerCase()}`}>
+              <div className="result-summary-header">
+                <span className="result-summary-badge-icon" aria-hidden="true">
+                  {currentStatus === 'CONFIRMED' ? '✓' : currentStatus === 'REVERTED' ? '↩' : '!'}
+                </span>
+                <div className="result-summary-text">
+                  <h3 className="result-summary-title">
+                    {currentStatus === 'CONFIRMED'
+                      ? 'Change Confirmed — Permanent'
+                      : currentStatus === 'REVERTED'
+                        ? activeChange.revert_trigger === 'MANUAL'
+                          ? 'Manual Revert Complete'
+                          : 'Auto-Revert Complete (Timer)'
+                        : 'Change Ended with Warnings'}
+                  </h3>
+                  <p className="result-summary-detail">
+                    {currentStatus === 'CONFIRMED'
+                      ? 'The change was confirmed by an operator and is permanent. Rollback schedule deleted and lock released.'
+                      : currentStatus === 'REVERTED'
+                        ? activeChange.revert_trigger === 'MANUAL'
+                          ? 'Operator triggered manual rollback. Security group rules restored to original state.'
+                          : 'Safety timer elapsed without confirmation. Deadman reverted only its recorded changes.'
+                        : 'Operation ended with partial revert or failure. Verify rules in AWS console.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="result-meta-grid">
+                <div className="result-meta-item">
+                  <span className="meta-label">Target SG</span>
+                  <span className="meta-val"><code>{activeChange.sg_id || form.sg_id || '—'}</code></span>
+                </div>
+                <div className="result-meta-item">
+                  <span className="meta-label">Result State</span>
+                  <span className="meta-val font-semibold">
+                    {currentStatus} {activeChange.revert_trigger ? `(${activeChange.revert_trigger})` : ''}
+                  </span>
+                </div>
+                <div className="result-meta-item">
+                  <span className="meta-label">Active Duration</span>
+                  <span className="meta-val">
+                    {activeChange.created_at && (activeChange.confirmed_at || activeChange.reverted_at)
+                      ? `${Math.max(0, (activeChange.confirmed_at || activeChange.reverted_at) - activeChange.created_at)}s`
+                      : `${activeChange.ttl_seconds || form.ttl_seconds}s`}
+                  </span>
+                </div>
+                <div className="result-meta-item">
+                  <span className="meta-label">Completed At</span>
+                  <span className="meta-val">
+                    {formatTime(activeChange.confirmed_at || activeChange.reverted_at)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="action-center">
             <div className="countdown-column">
               {countdown !== null ? (
                 <div className="countdown-ring-wrap">
-                  <svg width="220" height="220" className="countdown-svg">
-                    <circle cx="110" cy="110" r={radius} className="ring-bg" strokeWidth="12" />
+                  <svg width="250" height="250" className="countdown-svg">
+                    <circle cx="125" cy="125" r={radius} className="ring-bg" strokeWidth="14" />
                     <circle
-                      cx="110"
-                      cy="110"
+                      cx="125"
+                      cy="125"
                       r={radius}
                       className="ring-bar"
                       stroke={ringColor}
-                      strokeWidth="12"
+                      strokeWidth="14"
                       strokeDasharray={circumference}
                       strokeDashoffset={strokeDashoffset}
                     />
                   </svg>
                   <div className="countdown-inner">
                     <span className="countdown-value" style={{ color: ringColor }}>{countdown}</span>
-                    <span className="countdown-unit">SECONDS</span>
+                    <span className="countdown-unit">SECONDS REMAINING</span>
                   </div>
                 </div>
               ) : (
@@ -454,6 +617,14 @@ export default function App() {
                 </div>
               )}
               <div className="countdown-subtext">Auto-reverts unless confirmed</div>
+
+              {/* Note while status is PENDING */}
+              {isPending && (
+                <div className="live-pending-notice" role="status">
+                  <span className="live-indicator-dot" aria-hidden="true">●</span>
+                  <span>The change is live. Services may be unreachable until you confirm or it reverts.</span>
+                </div>
+              )}
             </div>
 
             <div className="action-button-group">
