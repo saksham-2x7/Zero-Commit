@@ -9,9 +9,32 @@ only debug the script and are never recorded here.
 |---|---|---|
 | 1c | A-9, A-10, A-11 | NOT RUN |
 | 1d | A-13, A-14 | NOT RUN |
-| 1f | none | PARTIAL: web/GitHub done, Devpost NOT CHECKED (not PASS) |
+| 1f | none | PARTIAL: general web searches only (by Claude in chat), Devpost NOT CHECKED (not PASS) |
+| S1-S10 scenario suite (`tests/scenarios/run.py`) | none | NOT RUN against the live stack |
+| Live manual walkthrough (below) | none | observed by M4, not scripted |
 
 Run: `python probes/sg_probe.py --yes-aws --write-md` (overwrites the marked result blocks below).
+
+## Live results (M4, Sat 19 Sep 2026, region ap-southeast-2, through the deployed website)
+
+Manual walkthrough by M4 in the browser on the deployed CloudFront site, recorded as reported. These are observations, not
+output from `tests/scenarios/run.py` and not the probe. The spec and probe default to `ap-south-1`; this walkthrough
+ran in `ap-southeast-2`, so nothing here is evidence for the `ap-south-1` assumptions.
+
+| Flow | Observed |
+|---|---|
+| Apply | Cutting tcp/80 took effect: the demo server went dark. |
+| Timeout auto-revert | Worked. Timeline: PENDING 01:54:07 PM, REVERTED (SCHEDULE) 01:55:41 PM, on a 60 s TTL: about 94 s total. |
+| Confirm | Worked. AUTHORIZE tcp 8080 from 10.0.0.0/8 reached status CONFIRMED. |
+| Manual revert | Worked. REVERTED (MANUAL), 5 s after Apply. |
+| Wrong token | Refused. |
+
+Note on timing: 94 s total on a 60 s TTL means the revert landed roughly 34 s after the window closed, if the PENDING
+timestamp is the arming time. Spec check 1a (M1's, not evaluated here) bounds the firing delay at -1..15 s. Not recorded as
+a 1a result, but worth M1 looking at before the video.
+
+Still **NOT RUN**: 1c and 1d (probe never run on real AWS), the S1-S10 suite against the live stack. 1f stays **PARTIAL**
+(web searches only, Devpost not checked).
 
 ## 1c: rule ids, revoke with different Description, describe latency
 
