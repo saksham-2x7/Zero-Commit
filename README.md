@@ -64,4 +64,4 @@ python -m pytest src/tests -q
 - **Saksham** (infra)
 - **Hamza** (core)
 - **Janani** (frontend)
-- **Ansh** (tests/demo/docs)
+- **Tanvi** (tests/demo/docs)
