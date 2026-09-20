@@ -1,6 +1,7 @@
 """
 Unit tests covering EVERY Spec §5 Error Code.
 """
+import os
 import json
 import time
 import pytest
@@ -275,7 +276,18 @@ def test_error_schedule_failed(aws_env):
         })
     }, MockContext())
     assert resp["statusCode"] == 502
-    assert json.loads(resp["body"])["error"]["code"] == "SCHEDULE_FAILED"
+    body = json.loads(resp["body"])
+    assert body["error"]["code"] == "SCHEDULE_FAILED"
+    change_id = body["error"]["change_id"]
+
+    # Verify DynamoDB item transitioned to FAILED and lock was released
+    ddb = aws_env["ddb"]
+    item_resp = ddb.get_item(TableName=os.environ["TABLE_NAME"], Key={"pk": {"S": f"CHG#{change_id}"}})
+    assert item_resp["Item"]["status"]["S"] == "FAILED"
+    assert item_resp["Item"]["apply_done"]["BOOL"] is False
+
+    lock_resp = ddb.get_item(TableName=os.environ["TABLE_NAME"], Key={"pk": {"S": f"SGLOCK#{sg_id}"}})
+    assert "Item" not in lock_resp
 
 
 # 16. APPLY_FAILED_REVERTED (500)

@@ -13,6 +13,56 @@ from revert.app import handler as revert_handler
 from status.app import handler as status_handler
 
 
+def test_apply_create_schedule_client_error(aws_env):
+    """
+    When create_schedule raises botocore.exceptions.ClientError (e.g. InternalServerException),
+    the handler must catch it, transition the item to FAILED with a conditional update,
+    release the SGLOCK, and return 502 SCHEDULE_FAILED.
+    Reads the item back from the mocked table to verify FAILED status and released lock.
+    """
+    sg_id = aws_env["sg_id"]
+    ddb = aws_env["ddb"]
+    table_name = os.environ["TABLE_NAME"]
+
+    # Trigger ClientError in MockSchedulerClient
+    aws_env["scheduler"].should_fail_create = True
+    aws_env["scheduler"].create_error_code = "InternalServerException"
+
+    req_body = {
+        "sg_id": sg_id,
+        "ttl_seconds": 90,
+        "ops": [
+            {"action": "AUTHORIZE", "protocol": "tcp", "from_port": 80, "to_port": 80, "cidr": "0.0.0.0/0"}
+        ]
+    }
+    resp = apply_handler({"body": json.dumps(req_body)}, MockContext())
+
+    assert resp["statusCode"] == 502
+    body = json.loads(resp["body"])
+    assert body["error"]["code"] == "SCHEDULE_FAILED"
+    assert body["error"]["exception"] == "ClientError"
+    assert "ClientError" in body["error"]["message"]
+    change_id = body["error"]["change_id"]
+    assert change_id
+
+    # Item in DynamoDB must be FAILED, not PENDING
+    item_resp = ddb.get_item(TableName=table_name, Key={"pk": {"S": f"CHG#{change_id}"}})
+    assert "Item" in item_resp
+    item = item_resp["Item"]
+    assert item["status"]["S"] == "FAILED"
+    assert item["apply_done"]["BOOL"] is False
+    assert "ClientError" in item.get("failure_reason", {}).get("S", "")
+
+    # SGLOCK must be released (lock item deleted)
+    lock_resp = ddb.get_item(TableName=table_name, Key={"pk": {"S": f"SGLOCK#{sg_id}"}})
+    assert "Item" not in lock_resp
+
+    # Subsequent apply on the same SG must succeed because the lock was released
+    aws_env["scheduler"].should_fail_create = False
+    resp2 = apply_handler({"body": json.dumps(req_body)}, MockContext())
+    assert resp2["statusCode"] == 201
+
+
 def test_apply_create_schedule_param_validation_error(aws_env):
     """
     When create_schedule raises ParamValidationError (e.g. empty Target.Arn),
