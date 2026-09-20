@@ -284,14 +284,24 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 change_id,
                 f"{de.code}: {de.message}",
             )
-        except Exception:
-            pass
+        except Exception as cleanup_err:
+            logger.error(
+                "Could not mark item as FAILED in DeadmanError cleanup for change_id %s: %s",
+                change_id,
+                cleanup_err,
+                exc_info=True,
+            )
 
         if sg_id and change_id:
             try:
                 release_sg_lock(ddb_client, table_name, sg_id, change_id)
-            except Exception:
-                pass
+            except Exception as lock_err:
+                logger.error(
+                    "Could not release SGLOCK in DeadmanError cleanup for change_id %s: %s",
+                    change_id,
+                    lock_err,
+                    exc_info=True,
+                )
 
         return de.to_response()
 
@@ -309,14 +319,24 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 f"{err_class}: {short_msg}",
             )
         except Exception as cleanup_err:
-            logger.exception("Could not mark item as FAILED in cleanup: %s", cleanup_err)
+            logger.error(
+                "Could not mark item as FAILED in cleanup for change_id %s: %s",
+                change_id,
+                cleanup_err,
+                exc_info=True,
+            )
 
         # Release SGLOCK only if active_change_id is this change
         if sg_id and change_id:
             try:
                 release_sg_lock(ddb_client, table_name, sg_id, change_id)
             except Exception as lock_err:
-                logger.exception("Could not release SGLOCK in cleanup: %s", lock_err)
+                logger.error(
+                    "Could not release SGLOCK in cleanup for change_id %s: %s",
+                    change_id,
+                    lock_err,
+                    exc_info=True,
+                )
 
         if not schedule_created:
             return make_error_response(

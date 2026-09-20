@@ -4,9 +4,12 @@ Spec §3 DynamoDB Schema, Spec §4 State Machine.
 """
 from typing import Dict, Any, Optional, Tuple
 import time
+import logging
 import boto3
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 import botocore.exceptions
+
+logger = logging.getLogger(__name__)
 
 from common.errors import DeadmanError
 from common.states import (
@@ -153,7 +156,7 @@ def transact_put_change_and_lock(
 
 
 def release_sg_lock(ddb_client: Any, table_name: str, sg_id: str, change_id: Optional[str] = None) -> None:
-    """Best-effort lock release."""
+    """Best-effort lock release with robust error logging."""
     lock_pk = f"SGLOCK#{sg_id}"
     try:
         kwargs: Dict[str, Any] = {
@@ -161,12 +164,23 @@ def release_sg_lock(ddb_client: Any, table_name: str, sg_id: str, change_id: Opt
             "Key": {"pk": {"S": lock_pk}},
         }
         if change_id:
-            kwargs["ConditionExpression"] = "active_change_id = :cid"
+            kwargs["ConditionExpression"] = "#cid = :cid"
+            kwargs["ExpressionAttributeNames"] = {"#cid": "active_change_id"}
             kwargs["ExpressionAttributeValues"] = {":cid": {"S": change_id}}
         ddb_client.delete_item(**kwargs)
-    except Exception:
-        # Best effort per spec
-        pass
+        logger.info("release_sg_lock successfully released lock for SG %s (change_id=%s)", sg_id, change_id)
+    except botocore.exceptions.ClientError as ce:
+        code = ce.response.get("Error", {}).get("Code", "")
+        if code == "ConditionalCheckFailedException":
+            logger.warning(
+                "release_sg_lock conditional check failed for SG %s, change_id %s (lock held by another change or already deleted)",
+                sg_id,
+                change_id,
+            )
+        else:
+            logger.error("release_sg_lock client error for SG %s, change_id %s: %s", sg_id, change_id, ce, exc_info=True)
+    except Exception as e:
+        logger.error("release_sg_lock unexpected error for SG %s, change_id %s: %s", sg_id, change_id, e, exc_info=True)
 
 
 def t1_fence(ddb_client: Any, table_name: str, change_id: str, now_ts: int, lease_seconds: int = 20) -> None:
@@ -477,18 +491,39 @@ def t8_schedule_failed(
     Condition: status = :P AND apply_done = :false
     """
     pk = f"CHG#{change_id}"
-    resp = ddb_client.update_item(
-        TableName=table_name,
-        Key={"pk": {"S": pk}},
-        ConditionExpression=COND_T8_SCHEDULE_FAILED,
-        UpdateExpression="SET #status = :F, failure_reason = :reason",
-        ExpressionAttributeNames={"#status": "status"},
-        ExpressionAttributeValues={
-            ":P": {"S": STATUS_PENDING},
-            ":F": {"S": STATUS_FAILED},
-            ":false": {"BOOL": False},
-            ":reason": {"S": failure_reason},
-        },
-        ReturnValues="ALL_NEW",
-    )
-    return dynamo_to_python(resp["Attributes"])
+    reason_val = str(failure_reason).strip() if failure_reason else "Schedule creation failed"
+    try:
+        resp = ddb_client.update_item(
+            TableName=table_name,
+            Key={"pk": {"S": pk}},
+            ConditionExpression="#status = :P AND #apply_done = :false",
+            UpdateExpression="SET #status = :F, #failure_reason = :reason",
+            ExpressionAttributeNames={
+                "#status": "status",
+                "#apply_done": "apply_done",
+                "#failure_reason": "failure_reason",
+            },
+            ExpressionAttributeValues={
+                ":P": {"S": STATUS_PENDING},
+                ":F": {"S": STATUS_FAILED},
+                ":false": {"BOOL": False},
+                ":reason": {"S": reason_val},
+            },
+            ReturnValues="ALL_NEW",
+        )
+        logger.info("t8_schedule_failed successfully transitioned change_id %s to FAILED", change_id)
+        return dynamo_to_python(resp["Attributes"])
+    except botocore.exceptions.ClientError as ce:
+        code = ce.response.get("Error", {}).get("Code", "")
+        if code == "ConditionalCheckFailedException":
+            logger.error(
+                "t8_schedule_failed conditional-check failure for change_id %s: item was not PENDING or apply_done was true: %s",
+                change_id,
+                ce,
+            )
+        else:
+            logger.error("t8_schedule_failed ClientError for change_id %s: %s", change_id, ce, exc_info=True)
+        raise ce
+    except Exception as e:
+        logger.error("t8_schedule_failed unexpected error for change_id %s: %s", change_id, e, exc_info=True)
+        raise e
