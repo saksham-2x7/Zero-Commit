@@ -32,16 +32,18 @@ Region: `ap-southeast-2`
 
 ## Verified on the Live Stack
 
-- **Apply cuts a rule and the server goes dark:** Verified live; dropping ingress cuts active connectivity as intended.
-- **Timeout auto-revert:** Verified live; upon countdown expiration, EventBridge invokes revert Lambda and restores access.
-- **Confirm:** Verified live; confirms changes permanently and disarms scheduled rollback.
-- **Manual revert:** Verified live; clicking "Revert Now" triggers immediate rollback.
-- **Wrong/missing token refused:** Verified live; API Gateway Lambda authorizer rejects unauthorized requests.
-- **64 unit tests pass:** Unit and mock test suite fully green.
+- Apply removed the port-80 rule and the demo server stopped answering.
+- The timer ended and the status changed to REVERTED (SCHEDULE) with the server answering again.
+- Confirm showed CONFIRMED and the rule stayed.
+- Revert Now showed REVERTED (MANUAL) within about 5 seconds.
+- A wrong or missing token was refused.
+- 64 unit tests pass (mocks).
 
 ## Known Limitations
 
 > "The revert lands after the timer ends (about 30 seconds late in one measured run; not characterised). IAM tag-guardrail negative tests and the full scenario suite were not run on the live stack; the code also checks tags itself as a backup. One shared token, IPv4 rules only, one active change per security group, single region (ap-southeast-2). Similar-project search was limited to GitHub and general web."
+
+Cause of the late revert: Scheduler invoked the revert function about 28 seconds after the requested time in the one run we inspected; the revert function itself took about 6 seconds.
 
 ## How to Run Locally
 
@@ -62,4 +64,4 @@ python -m pytest src/tests -q
 - **Saksham** (infra)
 - **Hamza** (core)
 - **Janani** (frontend)
-- **M4** (tests/demo/docs)
+- **Ansh** (tests/demo/docs)
