@@ -1,5 +1,5 @@
 # Contributors
-- ElaraLarsen <tanvirp.26300445@kalvium.community>
+- Tanvi <tanvirp.26300445@kalvium.community>
 - HamzaShaikh-source <267696657+HamzaShaikh-source@users.noreply.github.com>
-- SUTRADHAR <team@scamsahayak.dev>
+- Janani <mdanappam@gmail.com>
 - Saksham Singh <Sakshamsingh14sept@gmail.com>
