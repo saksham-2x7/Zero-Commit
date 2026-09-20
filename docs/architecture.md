@@ -1,26 +1,36 @@
-# Deadman Architecture
+# Architecture
 
 ```mermaid
-graph TD
-    Client[User / Frontend] -->|HTTPS| CF[CloudFront]
-    CF -->|Static Assets| S3[S3 Bucket]
-    CF -->|/api/*| API[API Gateway]
+flowchart TD
+    Client(User / Browser) --> CF(CloudFront)
+    CF --> S3(S3 Bucket - Static Site)
+    CF -- "/api/*" --> APIGW(API Gateway)
+    APIGW --> Auth(Lambda Authorizer)
+    Auth -- "Valid Token" --> APIGW
+    APIGW --> ApplyFn(Apply Function)
+    APIGW --> ConfirmFn(Confirm Function)
+    APIGW --> StatusFn(Status Function)
+    APIGW --> RevertFn(Revert Function)
     
-    API -->|Authorizer| Auth[Lambda: Authorizer]
-    API -->|POST /api/changes| Apply[Lambda: Apply]
-    API -->|POST /api/changes/:id/confirm| Confirm[Lambda: Confirm]
-    API -->|POST /api/changes/:id/revert| Revert[Lambda: Revert]
-    API -->|GET /api/changes/:id| Status[Lambda: Status]
+    ApplyFn --> DDB(DynamoDB)
+    ConfirmFn --> DDB
+    StatusFn --> DDB
+    RevertFn --> DDB
     
-    Apply --> DDB[(DynamoDB)]
-    Confirm --> DDB
-    Revert --> DDB
-    Status --> DDB
+    ApplyFn --> EBS(EventBridge Scheduler)
+    EBS -- "Timer expires" --> RevertFn
     
-    Apply --> Sched[EventBridge Scheduler]
-    Sched -.->|Trigger at TTL| Revert
-    Confirm -->|Delete Schedule| Sched
-    
-    Apply --> EC2[EC2 Security Group]
-    Revert --> EC2
+    ApplyFn --> EC2(EC2 Security Group)
+    RevertFn --> EC2
 ```
+
+| Component | Description |
+|-----------|-------------|
+| **S3 + CloudFront** | Hosts the static React frontend and routes `/api/*` traffic to the backend API Gateway. |
+| **API Gateway + Lambda Authorizer** | Exposes the HTTP API and performs Bearer token validation on every request. |
+| **AWS Lambda** | 4 serverless functions (`apply`, `confirm`, `revert`, `status`) containing the core logic. |
+| **DynamoDB** | Stores change plans, execution snapshots, current status, and security group locks. |
+| **EventBridge Scheduler** | Creates a precise, one-time timer schedule for each change to automatically trigger the revert function. |
+| **EC2 + Security Group** | The demonstration target where ingress rules are modified. |
+
+**Region:** `ap-southeast-2` (Project Sandbox restriction)

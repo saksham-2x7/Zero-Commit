@@ -1,15 +1,14 @@
 # Cost Analysis
 
-## Services that Scale to Zero (Pay-per-use)
-- **AWS Lambda**: Billed per invocation and duration. Scales to zero when no transactions are active.
-- **Amazon API Gateway (HTTP API)**: Billed per million requests. Scales to zero.
-- **Amazon DynamoDB (On-Demand)**: Billed per read/write request. Scales to zero (storage costs still apply for snapshots, but TTL purges them).
-- **Amazon EventBridge Scheduler**: Billed per million invocations. Scales to zero.
-- **Amazon CloudFront**: Billed per GB transferred. Scales to zero.
-- **Amazon S3**: Billed per GB stored and requests. Almost zero for a small frontend.
+This project is designed to be highly cost-efficient by leaning heavily into serverless and pay-per-use managed services.
 
-## Always-On Services (Fixed Costs)
-- **Amazon EC2 (Target Instance)**: An EC2 instance (e.g., `t3.nano`) runs continuously in the shared/m4 stages to test the application. This incurs a fixed hourly charge.
-- **Data Transfer**: Any outbound data transfer from the AWS network.
+### Scale-to-Zero Services
+The following services charge solely based on usage (requests, compute time, or storage) and scale to zero when no changes are being processed:
+* **AWS Lambda**: Billed per invocation and compute duration.
+* **Amazon API Gateway**: Billed per API request.
+* **Amazon DynamoDB**: Configured for On-Demand capacity, billed per read/write request and storage volume.
+* **Amazon S3 & CloudFront**: Billed for storage and outbound data transfer.
+* **Amazon EventBridge Scheduler**: Billed per schedule execution.
 
-Overall, the core "Deadman" transaction engine is fully serverless and scales to zero, costing essentially nothing when idle.
+### Fixed Costs
+* **Amazon EC2**: The demonstration server is the only always-on piece of infrastructure. To minimize costs, this instance can be stopped between demonstration sessions.
