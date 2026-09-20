@@ -243,6 +243,7 @@ Resources:
   RevertFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub "deadman-${Stage}-RevertFunction"
       Handler: revert.app.handler
       Timeout: 25
       Environment:
